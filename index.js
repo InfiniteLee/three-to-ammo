@@ -30,17 +30,19 @@ class ThreeToAmmo {
   createCollisionShape(sceneRoot, options) {
     const autoGenerateShape = options.autoGenerateShape || true;
     const shape = options.shape || SHAPE_HULL;
+    this.shape = shape;
     const recenter = options.recenter || false;
     if (options.halfExtents) {
       this.halfExtents.set(options.halfExtents.x, options.halfExtents.y, options.halfExtents.z);
     }
     const cylinderAxis = options.cylinderAxis || "y";
     const sphereRadius = options.sphereRadius || 1;
+    const margin = options.margin || 0.01;
     let collisionShape;
     let triMesh;
     let shapeHull;
 
-    let meshes = this._getMeshes(sceneRoot);
+    const meshes = this._getMeshes(sceneRoot);
 
     if (shape !== "mesh") {
       if (recenter) {
@@ -48,14 +50,19 @@ class ThreeToAmmo {
       }
     }
 
-    let vertices = this._getVertices(sceneRoot, meshes);
-    boundingBox.setFromPoints(vertices);
+    const vertices = this._getVertices(sceneRoot, meshes);
+    this.boundingBox.setFromPoints(vertices);
+
+    if (autoGenerateShape && ["sphere", "hull", "mesh"].indexOf(shape) === -1) {
+      const { max, min } = this.boundingBox;
+      this.halfExtents.subVectors(max, min).multiplyScalar(0.5);
+    }
+    const { x, y, z } = this.halfExtents;
 
     //TODO: Support convex hull decomposition, compound shapes, gimpact (dynamic trimesh)
     switch (shape) {
       case "box": {
-        let { x, y, z } = this._getHalfExtents(boundingBox);
-        let halfExtents = new Ammo.btVector3(x, y, z);
+        const halfExtents = new Ammo.btVector3(x, y, z);
         collisionShape = new Ammo.btBoxShape(halfExtents);
         Ammo.destroy(halfExtents);
         break;
@@ -65,7 +72,7 @@ class ThreeToAmmo {
         if (sphereRadius) {
           radius = sphereRadius;
         } else {
-          let sphere = new THREE.Sphere();
+          const sphere = new THREE.Sphere();
           sphere.setFromPoints(vertices);
           if (isFinite(sphere.radius)) {
             radius = sphere.radius;
@@ -75,8 +82,7 @@ class ThreeToAmmo {
         break;
       }
       case "cylinder": {
-        let { x, y, z } = this._getHalfExtents(boundingBox);
-        let halfExtents = new Ammo.btVector3(x, y, z);
+        const halfExtents = new Ammo.btVector3(x, y, z);
         switch (cylinderAxis) {
           case "y":
             collisionShape = new Ammo.btCylinderShape(halfExtents);
@@ -92,7 +98,6 @@ class ThreeToAmmo {
         break;
       }
       case "capsule": {
-        let { x, y, z } = this._getHalfExtents(boundingBox);
         switch (cylinderAxis) {
           case "y":
             collisionShape = new Ammo.btCapsuleShape(Math.max(x, z), y * 2);
@@ -107,7 +112,6 @@ class ThreeToAmmo {
         break;
       }
       case "cone": {
-        let { x, y, z } = this._getHalfExtents(boundingBox);
         switch (cylinderAxis) {
           case "y":
             collisionShape = new Ammo.btConeShape(Math.max(x, z), y * 2);
@@ -122,10 +126,10 @@ class ThreeToAmmo {
         break;
       }
       case "hull": {
-        let scale = new Ammo.btVector3(sceneRoot.scale.x, sceneRoot.scale.y, sceneRoot.scale.z);
-        let vec3 = new Ammo.btVector3();
-        let originalHull = new Ammo.btConvexHullShape();
-        originalHull.setMargin(data.margin);
+        const scale = new Ammo.btVector3(sceneRoot.scale.x, sceneRoot.scale.y, sceneRoot.scale.z);
+        const vec3 = new Ammo.btVector3();
+        const originalHull = new Ammo.btConvexHullShape();
+        originalHull.setMargin(margin);
 
         for (let i = 0; i < vertices.length; i++) {
           vec3.setValue(vertices[i].x, vertices[i].y, vertices[i].z);
@@ -136,7 +140,7 @@ class ThreeToAmmo {
         if (originalHull.getNumVertices() >= 100) {
           //Bullet documentation says don't use convexHulls with 100 verts or more
           shapeHull = new Ammo.btShapeHull(originalHull);
-          shapeHull.buildHull(data.margin);
+          shapeHull.buildHull(margin);
           Ammo.destroy(originalHull);
           collisionShape = new Ammo.btConvexHullShape(
             Ammo.getPointer(shapeHull.getVertexPointer()),
@@ -150,15 +154,9 @@ class ThreeToAmmo {
         break;
       }
       case "mesh": {
-        if (data.type !== "static") {
-          //TODO: support btTriangleMeshShape for dynamic trimeshes. (not performant)
-          console.warn("non-static mesh colliders are not currently supported");
-          break;
-        }
-
-        let a = new Ammo.btVector3();
-        let b = new Ammo.btVector3();
-        let c = new Ammo.btVector3();
+        const a = new Ammo.btVector3();
+        const b = new Ammo.btVector3();
+        const c = new Ammo.btVector3();
         triMesh = new Ammo.btTriangleMesh(true, false);
 
         for (let j = 0; j < vertices.length; j += 3) {
@@ -169,7 +167,7 @@ class ThreeToAmmo {
         }
 
         collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
-        collisionShape.setMargin(data.margin);
+        collisionShape.setMargin(margin);
         //TODO: support btScaledBvhTriangleMeshShape?
 
         Ammo.destroy(a);
@@ -179,7 +177,7 @@ class ThreeToAmmo {
       }
 
       default:
-        console.warn(data.shape + " is not currently supported");
+        console.warn(shape + " is not currently supported");
         return;
     }
 
@@ -205,15 +203,15 @@ class ThreeToAmmo {
 
   _getVertices(sceneRoot, meshes) {
     while (this.vertices.length > 0) {
-      this.vertexPool.push(vertices.pop());
+      this.vertexPool.push(this.vertices.pop());
     }
 
     this.inverse.getInverse(sceneRoot.matrixWorld);
 
     for (let j = 0; j < meshes.length; j++) {
-      let mesh = meshes[j];
+      const mesh = meshes[j];
 
-      let geometry = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+      const geometry = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
 
       if (this.shape === SHAPE_MESH) {
         geometry.applyMatrix(mesh.matrixWorld);
@@ -223,11 +221,11 @@ class ThreeToAmmo {
       }
 
       if (geometry.isBufferGeometry) {
-        let components = geometry.attributes.position.array;
+        const components = geometry.attributes.position.array;
         for (let i = 0; i < components.length; i += 3) {
-          let x = components[i];
-          let y = components[i + 1];
-          let z = components[i + 2];
+          const x = components[i];
+          const y = components[i + 1];
+          const z = components[i + 2];
 
           if (this.vertexPool.length > 0) {
             this.vertices.push(this.vertexPool.pop().set(x, y, z));
@@ -237,7 +235,7 @@ class ThreeToAmmo {
         }
       } else {
         for (let i = 0; i < geometry.vertices.length; i++) {
-          let vertex = geometry.vertices[i];
+          const vertex = geometry.vertices[i];
           if (this.vertexPool.length > 0) {
             this.vertices.push(this.vertexPool.pop().copy(vertex));
           } else {
@@ -247,20 +245,7 @@ class ThreeToAmmo {
       }
     }
 
-    return vertices;
-  }
-
-  _getHalfExtents(boundingBox) {
-    if (this.autoGenerateShape) {
-      let { min, max } = boundingBox;
-      halfExtents.subVectors(max, min).multiplyScalar(0.5);
-    }
-
-    return {
-      x: this.halfExtents.x,
-      y: this.halfExtents.y,
-      z: this.halfExtents.z
-    };
+    return this.vertices;
   }
 
   _recenter(sceneRoot, meshes) {
@@ -269,12 +254,12 @@ class ThreeToAmmo {
       return;
     }
 
-    let { min, max } = this._getBoundingBox(meshes);
+    const { min, max } = this._getBoundingBox(meshes);
     this.center.addVectors(max, min).multiplyScalar(-0.5);
     this.offset.makeTranslation(this.center.x, this.center.y, this.center.z);
 
     for (let j = 0; j < meshes.length; j++) {
-      let mesh = meshes[j];
+      const mesh = meshes[j];
       if (this.geometries.indexOf(mesh.geometry.uuid) !== -1) {
         continue;
       }
@@ -285,11 +270,11 @@ class ThreeToAmmo {
 
   _getBoundingBox(meshes) {
     for (let i = 0; i < meshes.length; ++i) {
-      let mesh = meshes[i];
+      const mesh = meshes[i];
       if (!mesh.geometry.boundingBox) {
         mesh.geometry.computeBoundingBox();
       }
-      let box = mesh.geometry.boundingBox;
+      const box = mesh.geometry.boundingBox;
 
       this.boundingBox.min.x = Math.min(box.min.x, box.min.x);
       this.boundingBox.min.y = Math.min(box.min.y, box.min.y);

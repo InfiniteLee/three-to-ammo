@@ -40,12 +40,14 @@ var ThreeToAmmo = function () {
     value: function createCollisionShape(sceneRoot, options) {
       var autoGenerateShape = options.autoGenerateShape || true;
       var shape = options.shape || SHAPE_HULL;
+      this.shape = shape;
       var recenter = options.recenter || false;
       if (options.halfExtents) {
         this.halfExtents.set(options.halfExtents.x, options.halfExtents.y, options.halfExtents.z);
       }
       var cylinderAxis = options.cylinderAxis || "y";
       var sphereRadius = options.sphereRadius || 1;
+      var margin = options.margin || 0.01;
       var collisionShape = void 0;
       var triMesh = void 0;
       var shapeHull = void 0;
@@ -59,20 +61,28 @@ var ThreeToAmmo = function () {
       }
 
       var vertices = this._getVertices(sceneRoot, meshes);
-      boundingBox.setFromPoints(vertices);
+      this.boundingBox.setFromPoints(vertices);
+
+      if (autoGenerateShape && ["sphere", "hull", "mesh"].indexOf(shape) === -1) {
+        var _boundingBox = this.boundingBox,
+            max = _boundingBox.max,
+            min = _boundingBox.min;
+
+        this.halfExtents.subVectors(max, min).multiplyScalar(0.5);
+      }
+      var _halfExtents = this.halfExtents,
+          x = _halfExtents.x,
+          y = _halfExtents.y,
+          z = _halfExtents.z;
 
       //TODO: Support convex hull decomposition, compound shapes, gimpact (dynamic trimesh)
+
       switch (shape) {
         case "box":
           {
-            var _getHalfExtents2 = this._getHalfExtents(boundingBox),
-                x = _getHalfExtents2.x,
-                y = _getHalfExtents2.y,
-                z = _getHalfExtents2.z;
-
-            var _halfExtents = new Ammo.btVector3(x, y, z);
-            collisionShape = new Ammo.btBoxShape(_halfExtents);
-            Ammo.destroy(_halfExtents);
+            var halfExtents = new Ammo.btVector3(x, y, z);
+            collisionShape = new Ammo.btBoxShape(halfExtents);
+            Ammo.destroy(halfExtents);
             break;
           }
         case "sphere":
@@ -92,12 +102,7 @@ var ThreeToAmmo = function () {
           }
         case "cylinder":
           {
-            var _getHalfExtents3 = this._getHalfExtents(boundingBox),
-                _x = _getHalfExtents3.x,
-                _y = _getHalfExtents3.y,
-                _z = _getHalfExtents3.z;
-
-            var _halfExtents2 = new Ammo.btVector3(_x, _y, _z);
+            var _halfExtents2 = new Ammo.btVector3(x, y, z);
             switch (cylinderAxis) {
               case "y":
                 collisionShape = new Ammo.btCylinderShape(_halfExtents2);
@@ -114,40 +119,30 @@ var ThreeToAmmo = function () {
           }
         case "capsule":
           {
-            var _getHalfExtents4 = this._getHalfExtents(boundingBox),
-                _x2 = _getHalfExtents4.x,
-                _y2 = _getHalfExtents4.y,
-                _z2 = _getHalfExtents4.z;
-
             switch (cylinderAxis) {
               case "y":
-                collisionShape = new Ammo.btCapsuleShape(Math.max(_x2, _z2), _y2 * 2);
+                collisionShape = new Ammo.btCapsuleShape(Math.max(x, z), y * 2);
                 break;
               case "x":
-                collisionShape = new Ammo.btCapsuleShapeX(Math.max(_y2, _z2), _x2 * 2);
+                collisionShape = new Ammo.btCapsuleShapeX(Math.max(y, z), x * 2);
                 break;
               case "z":
-                collisionShape = new Ammo.btCapsuleShapeZ(Math.max(_x2, _y2), _z2 * 2);
+                collisionShape = new Ammo.btCapsuleShapeZ(Math.max(x, y), z * 2);
                 break;
             }
             break;
           }
         case "cone":
           {
-            var _getHalfExtents5 = this._getHalfExtents(boundingBox),
-                _x3 = _getHalfExtents5.x,
-                _y3 = _getHalfExtents5.y,
-                _z3 = _getHalfExtents5.z;
-
             switch (cylinderAxis) {
               case "y":
-                collisionShape = new Ammo.btConeShape(Math.max(_x3, _z3), _y3 * 2);
+                collisionShape = new Ammo.btConeShape(Math.max(x, z), y * 2);
                 break;
               case "x":
-                collisionShape = new Ammo.btConeShapeX(Math.max(_y3, _z3), _x3 * 2);
+                collisionShape = new Ammo.btConeShapeX(Math.max(y, z), x * 2);
                 break;
               case "z":
-                collisionShape = new Ammo.btConeShapeZ(Math.max(_x3, _y3), _z3 * 2);
+                collisionShape = new Ammo.btConeShapeZ(Math.max(x, y), z * 2);
                 break;
             }
             break;
@@ -157,7 +152,7 @@ var ThreeToAmmo = function () {
             var scale = new Ammo.btVector3(sceneRoot.scale.x, sceneRoot.scale.y, sceneRoot.scale.z);
             var vec3 = new Ammo.btVector3();
             var originalHull = new Ammo.btConvexHullShape();
-            originalHull.setMargin(data.margin);
+            originalHull.setMargin(margin);
 
             for (var i = 0; i < vertices.length; i++) {
               vec3.setValue(vertices[i].x, vertices[i].y, vertices[i].z);
@@ -168,7 +163,7 @@ var ThreeToAmmo = function () {
             if (originalHull.getNumVertices() >= 100) {
               //Bullet documentation says don't use convexHulls with 100 verts or more
               shapeHull = new Ammo.btShapeHull(originalHull);
-              shapeHull.buildHull(data.margin);
+              shapeHull.buildHull(margin);
               Ammo.destroy(originalHull);
               collisionShape = new Ammo.btConvexHullShape(Ammo.getPointer(shapeHull.getVertexPointer()), shapeHull.numVertices());
             }
@@ -180,12 +175,6 @@ var ThreeToAmmo = function () {
           }
         case "mesh":
           {
-            if (data.type !== "static") {
-              //TODO: support btTriangleMeshShape for dynamic trimeshes. (not performant)
-              console.warn("non-static mesh colliders are not currently supported");
-              break;
-            }
-
             var a = new Ammo.btVector3();
             var b = new Ammo.btVector3();
             var c = new Ammo.btVector3();
@@ -199,7 +188,7 @@ var ThreeToAmmo = function () {
             }
 
             collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
-            collisionShape.setMargin(data.margin);
+            collisionShape.setMargin(margin);
             //TODO: support btScaledBvhTriangleMeshShape?
 
             Ammo.destroy(a);
@@ -209,7 +198,7 @@ var ThreeToAmmo = function () {
           }
 
         default:
-          console.warn(data.shape + " is not currently supported");
+          console.warn(shape + " is not currently supported");
           return;
       }
 
@@ -237,7 +226,7 @@ var ThreeToAmmo = function () {
     key: "_getVertices",
     value: function _getVertices(sceneRoot, meshes) {
       while (this.vertices.length > 0) {
-        this.vertexPool.push(vertices.pop());
+        this.vertexPool.push(this.vertices.pop());
       }
 
       this.inverse.getInverse(sceneRoot.matrixWorld);
@@ -279,23 +268,7 @@ var ThreeToAmmo = function () {
         }
       }
 
-      return vertices;
-    }
-  }, {
-    key: "_getHalfExtents",
-    value: function _getHalfExtents(boundingBox) {
-      if (this.autoGenerateShape) {
-        var min = boundingBox.min,
-            max = boundingBox.max;
-
-        halfExtents.subVectors(max, min).multiplyScalar(0.5);
-      }
-
-      return {
-        x: this.halfExtents.x,
-        y: this.halfExtents.y,
-        z: this.halfExtents.z
-      };
+      return this.vertices;
     }
   }, {
     key: "_recenter",
