@@ -1,0 +1,28 @@
+{
+  "name": "three-to-ammo",
+  "version": "0.1.0",
+  "description": "Convert THREE.Mesh to Ammo.btCollisionShape",
+  "homepage": "https://github.com/infinitelee/three-to-ammo",
+  "main": "dist/three-to-ammo.js",
+  "author": "Kevin Lee <kevin@infinite-lee.com>",
+  "license": "MPL-2.0",
+  "bugs": {
+    "url": "https://github.com/infinitelee/three-to-ammo/issues"
+  },
+  "scripts": {
+    "dist": "babel index.js -o dist/three-to-ammo.js --presets=env && babel index.js -o dist/three-to-ammo.min.js --presets=minify"
+  },
+  "devDependencies": {
+    "babel-cli": "^6.26.0",
+    "babel-preset-env": "^1.7.0",
+    "babel-preset-minify": "^0.4.3"
+  },
+  "repository": "infinitelee/three-to-ammo",
+  "keywords": [
+    "ammo",
+    "ammo.js",
+    "physics",
+    "three",
+    "three.js"
+  ]
+}
