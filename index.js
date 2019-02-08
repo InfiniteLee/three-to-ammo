@@ -1,73 +1,76 @@
+"use strict";
 /* global Ammo,THREE */
 
-const SHAPE_BOX = "box";
-const SHAPE_CYLINDER = "cylinder";
-const SHAPE_SPHERE = "sphere";
-const SHAPE_CAPSULE = "capsule";
-const SHAPE_CONE = "cone";
-const SHAPE_HULL = "hull";
-const SHAPE_MESH = "mesh";
+const Type = (exports.Type = {
+  BOX: "box",
+  CYLINDER: "cylinder",
+  SPHERE: "sphere",
+  CAPSULE: "capsule",
+  CONE: "cone",
+  HULL: "hull",
+  MESH: "mesh"
+});
 
-class ThreeToAmmo {
-  constructor() {
-    this.vertexPool = [];
-    this.vertices = [];
-    this.matrix = new THREE.Matrix4();
-    this.inverse = new THREE.Matrix4();
-    this.halfExtents = new THREE.Vector3();
-    this.offset = new THREE.Matrix4();
-    this.center = new THREE.Vector3();
-    this.geometries = [];
-    this.boundingBox = {
-      min: new THREE.Vector3(Number.MAX_VALUE),
-      max: new THREE.Vector3(Number.MIN_VALUE)
-    };
-    this.pos = new THREE.Vector3();
-    this.quat = new THREE.Quaternion();
-    this.boundingBox = new THREE.Box3();
-  }
+exports.createCollisionShape = (function() {
+  const halfExtents = new THREE.Vector3();
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  const box = new THREE.Box3();
 
-  createCollisionShape(sceneRoot, options) {
-    const autoGenerateShape = options.autoGenerateShape || true;
-    const shape = options.shape || SHAPE_HULL;
-    this.shape = shape;
-    const recenter = options.recenter || false;
+  return function(sceneRoot, options) {
+    const autoGenerateShape = options.hasOwnProperty("autoGenerateShape") ? options.autoGenerateShape : true;
+    const mergeGeometry = options.hasOwnProperty("mergeGeometry") ? options.mergeGeometry : true;
+    const type = options.type || Type.HULL;
+    const recenter = options.hasOwnProperty("recenter") ? options.recenter : false;
     if (options.halfExtents) {
-      this.halfExtents.set(options.halfExtents.x, options.halfExtents.y, options.halfExtents.z);
+      halfExtents.set(options.halfExtents.x, options.halfExtents.y, options.halfExtents.z);
     }
+    const minHalfExtent = options.hasOwnProperty("minHalfExtent") ? options.minHalfExtent : 0;
+    const maxHalfExtent = options.hasOwnProperty("maxHalfExtent") ? options.maxHalfExtent : Number.POSITIVE_INFINITY;
     const cylinderAxis = options.cylinderAxis || "y";
-    const sphereRadius = options.sphereRadius || 1;
-    const margin = options.margin || 0.01;
+    const sphereRadius = options.sphereRadius || NaN;
+    const margin = options.hasOwnProperty("margin") ? options.margin : 0.01;
+
     let collisionShape;
     let triMesh;
     let shapeHull;
 
-    const meshes = this._getMeshes(sceneRoot);
+    let meshes;
 
-    if (shape !== "mesh") {
+    if (mergeGeometry) {
+      meshes = _getMeshes(sceneRoot);
+    } else {
+      meshes = [sceneRoot];
+    }
+
+    if (type !== "mesh") {
       if (recenter) {
-        this._recenter(sceneRoot, meshes);
+        _recenter(sceneRoot, meshes);
       }
     }
 
-    const vertices = this._getVertices(sceneRoot, meshes);
-    this.boundingBox.setFromPoints(vertices);
+    const vertices = _getVertices(sceneRoot, meshes);
+    box.setFromPoints(vertices);
 
-    if (autoGenerateShape && ["sphere", "hull", "mesh"].indexOf(shape) === -1) {
-      const { max, min } = this.boundingBox;
-      this.halfExtents.subVectors(max, min).multiplyScalar(0.5);
+    if (autoGenerateShape && ["sphere", "hull", "mesh"].indexOf(type) === -1) {
+      const { max, min } = box;
+      halfExtents
+        .subVectors(max, min)
+        .multiplyScalar(0.5)
+        .clampScalar(minHalfExtent, maxHalfExtent);
     }
-    const { x, y, z } = this.halfExtents;
+    const { x, y, z } = halfExtents;
 
     //TODO: Support convex hull decomposition, compound shapes, gimpact (dynamic trimesh)
-    switch (shape) {
-      case "box": {
+    switch (type) {
+      case Type.BOX: {
         const halfExtents = new Ammo.btVector3(x, y, z);
         collisionShape = new Ammo.btBoxShape(halfExtents);
         Ammo.destroy(halfExtents);
         break;
       }
-      case "sphere": {
+      case Type.SPHERE: {
         let radius = 1;
         if (sphereRadius) {
           radius = sphereRadius;
@@ -81,7 +84,7 @@ class ThreeToAmmo {
         collisionShape = new Ammo.btSphereShape(radius);
         break;
       }
-      case "cylinder": {
+      case Type.CYLINDER: {
         const halfExtents = new Ammo.btVector3(x, y, z);
         switch (cylinderAxis) {
           case "y":
@@ -97,7 +100,7 @@ class ThreeToAmmo {
         Ammo.destroy(halfExtents);
         break;
       }
-      case "capsule": {
+      case Type.CAPSULE: {
         switch (cylinderAxis) {
           case "y":
             collisionShape = new Ammo.btCapsuleShape(Math.max(x, z), y * 2);
@@ -111,7 +114,7 @@ class ThreeToAmmo {
         }
         break;
       }
-      case "cone": {
+      case Type.CONE: {
         switch (cylinderAxis) {
           case "y":
             collisionShape = new Ammo.btConeShape(Math.max(x, z), y * 2);
@@ -125,8 +128,9 @@ class ThreeToAmmo {
         }
         break;
       }
-      case "hull": {
-        const scale = new Ammo.btVector3(sceneRoot.scale.x, sceneRoot.scale.y, sceneRoot.scale.z);
+      case Type.HULL: {
+        sceneRoot.matrixWorld.decompose(pos, quat, scale);
+        const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
         const vec3 = new Ammo.btVector3();
         const originalHull = new Ammo.btConvexHullShape();
         originalHull.setMargin(margin);
@@ -137,7 +141,7 @@ class ThreeToAmmo {
         }
 
         collisionShape = originalHull;
-        if (originalHull.getNumVertices() >= 100) {
+        if (originalHull.getNumVertices() >= 100 || true) {
           //Bullet documentation says don't use convexHulls with 100 verts or more
           shapeHull = new Ammo.btShapeHull(originalHull);
           shapeHull.buildHull(margin);
@@ -147,13 +151,15 @@ class ThreeToAmmo {
             shapeHull.numVertices()
           );
         }
-        collisionShape.setLocalScaling(scale);
+        collisionShape.setLocalScaling(localScale);
 
-        Ammo.destroy(scale);
+        Ammo.destroy(localScale);
         Ammo.destroy(vec3);
         break;
       }
-      case "mesh": {
+      case Type.MESH: {
+        sceneRoot.matrixWorld.decompose(pos, quat, scale);
+        const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
         const a = new Ammo.btVector3();
         const b = new Ammo.btVector3();
         const c = new Ammo.btVector3();
@@ -167,9 +173,9 @@ class ThreeToAmmo {
         }
 
         collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
-        collisionShape.setMargin(margin);
-        //TODO: support btScaledBvhTriangleMeshShape?
+        collisionShape.setLocalScaling(localScale);
 
+        Ammo.destroy(localScale);
         Ammo.destroy(a);
         Ammo.destroy(b);
         Ammo.destroy(c);
@@ -181,43 +187,51 @@ class ThreeToAmmo {
         return;
     }
 
-    return {
-      collisionShape: collisionShape,
-      destroy: () => {
-        if (shapeHull) Ammo.destroy(shapeHull);
-        if (triMesh) Ammo.destroy(triMesh);
-        if (collisionShape) Ammo.destroy(collisionShape);
-      }
+    collisionShape.setMargin(margin);
+
+    collisionShape.destroy = () => {
+      if (shapeHull) Ammo.destroy(shapeHull);
+      if (triMesh) Ammo.destroy(triMesh);
+      if (collisionShape) Ammo.destroy(collisionShape);
     };
-  }
 
-  _getMeshes(sceneRoot) {
-    let meshes = [];
-    sceneRoot.traverse(o => {
-      if (o.type === "Mesh" && (!THREE.Sky || o.__proto__ != THREE.Sky.prototype)) {
-        meshes.push(o);
-      }
-    });
-    return meshes;
-  }
+    collisionShape.type = type;
 
-  _getVertices(sceneRoot, meshes) {
-    while (this.vertices.length > 0) {
-      this.vertexPool.push(this.vertices.pop());
+    return collisionShape;
+  };
+})();
+
+function _getMeshes(sceneRoot) {
+  let meshes = [];
+  sceneRoot.traverse(o => {
+    if (o.type === "Mesh" && (!THREE.Sky || o.__proto__ != THREE.Sky.prototype)) {
+      meshes.push(o);
+    }
+  });
+  return meshes;
+}
+
+const _getVertices = (function() {
+  const vertexPool = [];
+  const vertices = [];
+  const matrix = new THREE.Matrix4();
+  const inverse = new THREE.Matrix4();
+
+  return function(sceneRoot, meshes) {
+    while (vertices.length > 0) {
+      vertexPool.push(vertices.pop());
     }
 
-    this.inverse.getInverse(sceneRoot.matrixWorld);
+    inverse.getInverse(sceneRoot.matrixWorld);
 
     for (let j = 0; j < meshes.length; j++) {
       const mesh = meshes[j];
 
       const geometry = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
 
-      if (this.shape === SHAPE_MESH) {
-        geometry.applyMatrix(mesh.matrixWorld);
-      } else {
-        this.matrix.multiplyMatrices(this.inverse, mesh.matrixWorld);
-        geometry.applyMatrix(this.matrix);
+      if (mesh !== sceneRoot) {
+        matrix.multiplyMatrices(inverse, mesh.matrixWorld);
+        geometry.applyMatrix(matrix);
       }
 
       if (geometry.isBufferGeometry) {
@@ -227,48 +241,61 @@ class ThreeToAmmo {
           const y = components[i + 1];
           const z = components[i + 2];
 
-          if (this.vertexPool.length > 0) {
-            this.vertices.push(this.vertexPool.pop().set(x, y, z));
+          if (vertexPool.length > 0) {
+            vertices.push(vertexPool.pop().set(x, y, z));
           } else {
-            this.vertices.push(new THREE.Vector3(x, y, z));
+            vertices.push(new THREE.Vector3(x, y, z));
           }
         }
       } else {
         for (let i = 0; i < geometry.vertices.length; i++) {
           const vertex = geometry.vertices[i];
-          if (this.vertexPool.length > 0) {
-            this.vertices.push(this.vertexPool.pop().copy(vertex));
+          if (vertexPool.length > 0) {
+            vertices.push(vertexPool.pop().copy(vertex));
           } else {
-            this.vertices.push(new THREE.Vector3(vertex.x, vertex.y, vertex.z));
+            vertices.push(new THREE.Vector3(vertex.x, vertex.y, vertex.z));
           }
         }
       }
     }
 
-    return this.vertices;
-  }
+    return vertices;
+  };
+})();
 
-  _recenter(sceneRoot, meshes) {
+const _recenter = (function() {
+  const geometries = [];
+  const offset = new THREE.Matrix4();
+  const center = new THREE.Vector3();
+
+  return function(sceneRoot, meshes) {
     if (meshes.length === 1) {
       meshes[0].geometry.center();
       return;
     }
 
-    const { min, max } = this._getBoundingBox(meshes);
-    this.center.addVectors(max, min).multiplyScalar(-0.5);
-    this.offset.makeTranslation(this.center.x, this.center.y, this.center.z);
+    const { min, max } = _getBoundingBox(meshes);
+    center.addVectors(max, min).multiplyScalar(-0.5);
+    offset.makeTranslation(center.x, center.y, center.z);
 
     for (let j = 0; j < meshes.length; j++) {
       const mesh = meshes[j];
-      if (this.geometries.indexOf(mesh.geometry.uuid) !== -1) {
+      if (geometries.indexOf(mesh.geometry.uuid) !== -1) {
         continue;
       }
-      mesh.geometry.applyMatrix(this.offset);
-      this.geometries.push(mesh.geometry.uuid);
+      mesh.geometry.applyMatrix(offset);
+      geometries.push(mesh.geometry.uuid);
     }
-  }
+  };
+})();
 
-  _getBoundingBox(meshes) {
+const _getBoundingBox = (function() {
+  const boundingBox = {
+    min: new THREE.Vector3(Number.MAX_VALUE),
+    max: new THREE.Vector3(Number.MIN_VALUE)
+  };
+
+  return function(meshes) {
     for (let i = 0; i < meshes.length; ++i) {
       const mesh = meshes[i];
       if (!mesh.geometry.boundingBox) {
@@ -276,16 +303,14 @@ class ThreeToAmmo {
       }
       const box = mesh.geometry.boundingBox;
 
-      this.boundingBox.min.x = Math.min(box.min.x, box.min.x);
-      this.boundingBox.min.y = Math.min(box.min.y, box.min.y);
-      this.boundingBox.min.z = Math.min(box.min.z, box.min.z);
+      boundingBox.min.x = Math.min(box.min.x, box.min.x);
+      boundingBox.min.y = Math.min(box.min.y, box.min.y);
+      boundingBox.min.z = Math.min(box.min.z, box.min.z);
 
-      this.boundingBox.max.x = Math.max(box.max.x, box.max.x);
-      this.boundingBox.max.y = Math.max(box.max.y, box.max.y);
-      this.boundingBox.max.z = Math.max(box.max.z, box.max.z);
+      boundingBox.max.x = Math.max(box.max.x, box.max.x);
+      boundingBox.max.y = Math.max(box.max.y, box.max.y);
+      boundingBox.max.z = Math.max(box.max.z, box.max.z);
     }
-    return this.boundingBox;
-  }
-}
-
-module.exports = ThreeToAmmo;
+    return boundingBox;
+  };
+})();
