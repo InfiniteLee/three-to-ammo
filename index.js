@@ -37,6 +37,12 @@ exports.createCollisionShape = (function() {
     let shapeHull;
 
     let meshes;
+    let vertices;
+
+    if ((mergeGeometry || autoGenerateShape || recenter) && !sceneRoot) {
+      console.warn("cannot use mergeGeometry, autoGenerateShape, or recenter if sceneRoot is null");
+      return;
+    }
 
     if (mergeGeometry) {
       meshes = _getMeshes(sceneRoot);
@@ -50,15 +56,17 @@ exports.createCollisionShape = (function() {
       }
     }
 
-    const vertices = _getVertices(sceneRoot, meshes);
-    box.setFromPoints(vertices);
+    if (autoGenerateShape) {
+      vertices = _getVertices(sceneRoot, meshes);
 
-    if (autoGenerateShape && ["sphere", "hull", "mesh"].indexOf(type) === -1) {
-      const { max, min } = box;
-      halfExtents
-        .subVectors(max, min)
-        .multiplyScalar(0.5)
-        .clampScalar(minHalfExtent, maxHalfExtent);
+      if (["sphere", "hull", "mesh"].indexOf(type) === -1) {
+        box.setFromPoints(vertices);
+        const { max, min } = box;
+        halfExtents
+          .subVectors(max, min)
+          .multiplyScalar(0.5)
+          .clampScalar(minHalfExtent, maxHalfExtent);
+      }
     }
     const { x, y, z } = halfExtents;
 
