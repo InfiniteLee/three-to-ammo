@@ -31,6 +31,7 @@ exports.createCollisionShape = (function() {
     const cylinderAxis = options.cylinderAxis || "y";
     const sphereRadius = options.sphereRadius || NaN;
     const margin = options.hasOwnProperty("margin") ? options.margin : 0.01;
+    const hullMaxVertices = options.hullMaxVertices || 100000;
 
     let collisionShape;
     let triMesh;
@@ -59,7 +60,7 @@ exports.createCollisionShape = (function() {
     if (autoGenerateShape) {
       vertices = _getVertices(sceneRoot, meshes);
 
-      if (["sphere", "hull", "mesh"].indexOf(type) === -1) {
+      if ([Type.SPHERE, Type.HULL, Type.MESH].indexOf(type) === -1) {
         box.setFromPoints(vertices);
         const { max, min } = box;
         halfExtents
@@ -142,7 +143,16 @@ exports.createCollisionShape = (function() {
         const vec3 = new Ammo.btVector3();
         const originalHull = new Ammo.btConvexHullShape();
         originalHull.setMargin(margin);
-
+        if (vertices.length > hullMaxVertices) {
+          console.warn(
+            "too many vertices for hull shape; randomly sampling " +
+              hullMaxVertices +
+              " from " +
+              vertices.length +
+              " vertices"
+          );
+          vertices = getRandomSample(vertices, hullMaxVertices);
+        }
         for (let i = 0; i < vertices.length; i++) {
           vec3.setValue(vertices[i].x, vertices[i].y, vertices[i].z);
           originalHull.addPoint(vec3, i == vertices.length - 1);
@@ -178,6 +188,7 @@ exports.createCollisionShape = (function() {
           b.setValue(vertices[j + 1].x, vertices[j + 1].y, vertices[j + 1].z);
           c.setValue(vertices[j + 2].x, vertices[j + 2].y, vertices[j + 2].z);
           triMesh.addTriangle(a, b, c, j == vertices.length - 3);
+          //TODO: limit number of triangles?
         }
 
         collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
@@ -209,10 +220,42 @@ exports.createCollisionShape = (function() {
   };
 })();
 
+//https://stackoverflow.com/a/37835673
+const getRandomSample = (function() {
+  const swaps = [];
+  return function(array, size) {
+    let r,
+      i = array.length,
+      end = i - size,
+      temp;
+
+    while (i-- > end) {
+      r = Math.floor(Math.random() * (i + 1));
+      temp = array[r];
+      array[r] = array[i];
+      array[i] = temp;
+      swaps.push(i);
+      swaps.push(r);
+    }
+
+    const sample = array.slice(end);
+
+    while (size--) {
+      i = swaps.pop();
+      r = swaps.pop();
+      temp = array[i];
+      array[i] = array[r];
+      array[r] = temp;
+    }
+
+    return sample;
+  };
+})();
+
 function _getMeshes(sceneRoot) {
   let meshes = [];
   sceneRoot.traverse(o => {
-    if (o.type === "Mesh" && (!THREE.Sky || o.__proto__ != THREE.Sky.prototype)) {
+    if (o.isMesh && (!THREE.Sky || o.__proto__ != THREE.Sky.prototype)) {
       meshes.push(o);
     }
   });
