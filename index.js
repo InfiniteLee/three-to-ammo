@@ -159,7 +159,7 @@ exports.createCollisionShape = (function() {
         }
 
         collisionShape = originalHull;
-        if (originalHull.getNumVertices() >= 100 || true) {
+        if (originalHull.getNumVertices() >= 100) {
           //Bullet documentation says don't use convexHulls with 100 verts or more
           shapeHull = new Ammo.btShapeHull(originalHull);
           shapeHull.buildHull(margin);
