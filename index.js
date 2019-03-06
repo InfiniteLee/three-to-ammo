@@ -19,9 +19,6 @@ exports.createCollisionShape = (function() {
     const mergeGeometry = options.hasOwnProperty("mergeGeometry") ? options.mergeGeometry : true;
     const type = options.type || Type.HULL;
     const recenter = options.hasOwnProperty("recenter") ? options.recenter : false;
-    if (options.halfExtents) {
-      halfExtents.set(options.halfExtents.x, options.halfExtents.y, options.halfExtents.z);
-    }
     const minHalfExtent = options.hasOwnProperty("minHalfExtent") ? options.minHalfExtent : 0;
     const maxHalfExtent = options.hasOwnProperty("maxHalfExtent") ? options.maxHalfExtent : Number.POSITIVE_INFINITY;
     const cylinderAxis = options.cylinderAxis || "y";
@@ -55,34 +52,33 @@ exports.createCollisionShape = (function() {
 
     if (autoGenerateShape) {
       vertices = _getVertices(sceneRoot, meshes);
-      if (type === Type.SPHERE) {
-        sphereRadius = computeRadius(vertices);
-      }
-      if ([Type.SPHERE, Type.HULL, Type.MESH].indexOf(type) === -1) {
-        computeHalfExtents(vertices, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
-      }
     }
 
     //TODO: Support convex hull decomposition, compound shapes, gimpact (dynamic trimesh)
     switch (type) {
     case Type.BOX: {
-      collisionShape = _createBoxShape(halfExtents);
+      const bounds = options.halfExtents || computeHalfExtents(vertices, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
+      collisionShape = _createBoxShape(bounds);
       break;
     }
     case Type.CYLINDER: {
-      collisionShape = _createCylinderShape(halfExtents, cylinderAxis);
+      const bounds = options.halfExtents || computeHalfExtents(vertices, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
+      collisionShape = _createCylinderShape(bounds, cylinderAxis);
       break;
     }
     case Type.CAPSULE: {
-      collisionShape = _createCapsuleShape(halfExtents, cylinderAxis);
+      const bounds = options.halfExtents || computeHalfExtents(vertices, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
+      collisionShape = _createCapsuleShape(bounds, cylinderAxis);
       break;
     }
     case Type.CONE: {
-      collisionShape = _createConeShape(halfExtents, cylinderAxis);
+      const bounds = options.halfExtents || computeHalfExtents(vertices, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
+      collisionShape = _createConeShape(bounds, cylinderAxis);
       break;
     }
     case Type.SPHERE: {
-      collisionShape = new Ammo.btSphereShape(sphereRadius);
+      const radius = options.sphereRadius || computeRadius(vertices);
+      collisionShape = new Ammo.btSphereShape(radius);
       break;
     }
     case Type.HULL: {
