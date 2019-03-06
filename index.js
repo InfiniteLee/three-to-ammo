@@ -13,10 +13,6 @@ const Type = (exports.Type = {
 
 exports.createCollisionShape = (function() {
   const halfExtents = new THREE.Vector3();
-  const pos = new THREE.Vector3();
-  const quat = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
-  const box = new THREE.Box3();
 
   return function(sceneRoot, options) {
     const autoGenerateShape = options.hasOwnProperty("autoGenerateShape") ? options.autoGenerateShape : true;
@@ -29,10 +25,10 @@ exports.createCollisionShape = (function() {
     const minHalfExtent = options.hasOwnProperty("minHalfExtent") ? options.minHalfExtent : 0;
     const maxHalfExtent = options.hasOwnProperty("maxHalfExtent") ? options.maxHalfExtent : Number.POSITIVE_INFINITY;
     const cylinderAxis = options.cylinderAxis || "y";
-    const sphereRadius = options.sphereRadius || NaN;
     const margin = options.hasOwnProperty("margin") ? options.margin : 0.01;
     const hullMaxVertices = options.hullMaxVertices || 100000;
 
+    let sphereRadius = options.sphereRadius || NaN;
     let collisionShape;
     let triMesh;
     let shapeHull;
@@ -42,7 +38,7 @@ exports.createCollisionShape = (function() {
 
     if ((mergeGeometry || autoGenerateShape || recenter) && !sceneRoot) {
       console.warn("cannot use mergeGeometry, autoGenerateShape, or recenter if sceneRoot is null");
-      return;
+      return null;
     }
 
     if (mergeGeometry) {
@@ -59,164 +55,198 @@ exports.createCollisionShape = (function() {
 
     if (autoGenerateShape) {
       vertices = _getVertices(sceneRoot, meshes);
-
+      if (type === Type.SPHERE) {
+        sphereRadius = computeRadius(vertices);
+      }
       if ([Type.SPHERE, Type.HULL, Type.MESH].indexOf(type) === -1) {
-        box.setFromPoints(vertices);
-        const { max, min } = box;
-        halfExtents
-          .subVectors(max, min)
-          .multiplyScalar(0.5)
-          .clampScalar(minHalfExtent, maxHalfExtent);
+        computeHalfExtents(vertices, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
       }
     }
-    const { x, y, z } = halfExtents;
 
     //TODO: Support convex hull decomposition, compound shapes, gimpact (dynamic trimesh)
     switch (type) {
-      case Type.BOX: {
-        const halfExtents = new Ammo.btVector3(x, y, z);
-        collisionShape = new Ammo.btBoxShape(halfExtents);
-        Ammo.destroy(halfExtents);
-        break;
-      }
-      case Type.SPHERE: {
-        let radius = 1;
-        if (sphereRadius) {
-          radius = sphereRadius;
-        } else {
-          const sphere = new THREE.Sphere();
-          sphere.setFromPoints(vertices);
-          if (isFinite(sphere.radius)) {
-            radius = sphere.radius;
-          }
-        }
-        collisionShape = new Ammo.btSphereShape(radius);
-        break;
-      }
-      case Type.CYLINDER: {
-        const halfExtents = new Ammo.btVector3(x, y, z);
-        switch (cylinderAxis) {
-          case "y":
-            collisionShape = new Ammo.btCylinderShape(halfExtents);
-            break;
-          case "x":
-            collisionShape = new Ammo.btCylinderShapeX(halfExtents);
-            break;
-          case "z":
-            collisionShape = new Ammo.btCylinderShapeZ(halfExtents);
-            break;
-        }
-        Ammo.destroy(halfExtents);
-        break;
-      }
-      case Type.CAPSULE: {
-        switch (cylinderAxis) {
-          case "y":
-            collisionShape = new Ammo.btCapsuleShape(Math.max(x, z), y * 2);
-            break;
-          case "x":
-            collisionShape = new Ammo.btCapsuleShapeX(Math.max(y, z), x * 2);
-            break;
-          case "z":
-            collisionShape = new Ammo.btCapsuleShapeZ(Math.max(x, y), z * 2);
-            break;
-        }
-        break;
-      }
-      case Type.CONE: {
-        switch (cylinderAxis) {
-          case "y":
-            collisionShape = new Ammo.btConeShape(Math.max(x, z), y * 2);
-            break;
-          case "x":
-            collisionShape = new Ammo.btConeShapeX(Math.max(y, z), x * 2);
-            break;
-          case "z":
-            collisionShape = new Ammo.btConeShapeZ(Math.max(x, y), z * 2);
-            break;
-        }
-        break;
-      }
-      case Type.HULL: {
-        sceneRoot.matrixWorld.decompose(pos, quat, scale);
-        const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
-        const vec3 = new Ammo.btVector3();
-        const originalHull = new Ammo.btConvexHullShape();
-        originalHull.setMargin(margin);
-        if (vertices.length > hullMaxVertices) {
-          console.warn(
-            "too many vertices for hull shape; randomly sampling " +
-              hullMaxVertices +
-              " from " +
-              vertices.length +
-              " vertices"
-          );
-          vertices = getRandomSample(vertices, hullMaxVertices);
-        }
-        for (let i = 0; i < vertices.length; i++) {
-          vec3.setValue(vertices[i].x, vertices[i].y, vertices[i].z);
-          originalHull.addPoint(vec3, i == vertices.length - 1);
-        }
-
-        collisionShape = originalHull;
-        if (originalHull.getNumVertices() >= 100 || true) {
-          //Bullet documentation says don't use convexHulls with 100 verts or more
-          shapeHull = new Ammo.btShapeHull(originalHull);
-          shapeHull.buildHull(margin);
-          Ammo.destroy(originalHull);
-          collisionShape = new Ammo.btConvexHullShape(
-            Ammo.getPointer(shapeHull.getVertexPointer()),
-            shapeHull.numVertices()
-          );
-        }
-        collisionShape.setLocalScaling(localScale);
-
-        Ammo.destroy(localScale);
-        Ammo.destroy(vec3);
-        break;
-      }
-      case Type.MESH: {
-        sceneRoot.matrixWorld.decompose(pos, quat, scale);
-        const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
-        const a = new Ammo.btVector3();
-        const b = new Ammo.btVector3();
-        const c = new Ammo.btVector3();
-        triMesh = new Ammo.btTriangleMesh(true, false);
-
-        for (let j = 0; j < vertices.length; j += 3) {
-          a.setValue(vertices[j].x, vertices[j].y, vertices[j].z);
-          b.setValue(vertices[j + 1].x, vertices[j + 1].y, vertices[j + 1].z);
-          c.setValue(vertices[j + 2].x, vertices[j + 2].y, vertices[j + 2].z);
-          triMesh.addTriangle(a, b, c, j == vertices.length - 3);
-          //TODO: limit number of triangles?
-        }
-
-        collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
-        collisionShape.setLocalScaling(localScale);
-
-        Ammo.destroy(localScale);
-        Ammo.destroy(a);
-        Ammo.destroy(b);
-        Ammo.destroy(c);
-        break;
-      }
-
-      default:
-        console.warn(shape + " is not currently supported");
-        return;
+    case Type.BOX: {
+      collisionShape = _createBoxShape(halfExtents);
+      break;
+    }
+    case Type.CYLINDER: {
+      collisionShape = _createCylinderShape(halfExtents, cylinderAxis);
+      break;
+    }
+    case Type.CAPSULE: {
+      collisionShape = _createCapsuleShape(halfExtents, cylinderAxis);
+      break;
+    }
+    case Type.CONE: {
+      collisionShape = _createConeShape(halfExtents, cylinderAxis);
+      break;
+    }
+    case Type.SPHERE: {
+      collisionShape = new Ammo.btSphereShape(sphereRadius);
+      break;
+    }
+    case Type.HULL: {
+      collisionShape = _createHullShape(sceneRoot, margin, vertices, hullMaxVertices);
+      break;
+    }
+    case Type.MESH: {
+      collisionShape = _createTriMeshShape(sceneRoot, vertices);
+      break;
+    }
+    default:
+      console.warn(type + " is not currently supported");
+      return null;
     }
 
+    collisionShape.type = type;
     collisionShape.setMargin(margin);
-
     collisionShape.destroy = () => {
-      if (shapeHull) Ammo.destroy(shapeHull);
-      if (triMesh) Ammo.destroy(triMesh);
-      if (collisionShape) Ammo.destroy(collisionShape);
+      for (let res of collisionShape.resources || []) {
+        Ammo.destroy(res);
+      }
+      Ammo.destroy(collisionShape);
     };
 
-    collisionShape.type = type;
-
     return collisionShape;
+  };
+})();
+
+const _createBoxShape = function({x, y, z} = halfExtents) {
+  const btHalfExtents = new Ammo.btVector3(x, y, z);
+  const collisionShape = new Ammo.btBoxShape(btHalfExtents);
+  Ammo.destroy(btHalfExtents);
+  return collisionShape;
+};
+
+const _createCylinderShape = function({x, y, z} = halfExtents, cylinderAxis) {
+  const btHalfExtents = new Ammo.btVector3(x, y, z);
+  const collisionShape = (() => {
+    switch (cylinderAxis) {
+    case "y":
+      return new Ammo.btCylinderShape(btHalfExtents);
+    case "x":
+      return new Ammo.btCylinderShapeX(btHalfExtents);
+    case "z":
+      return new Ammo.btCylinderShapeZ(btHalfExtents);
+    }
+    return null;
+  })();
+  Ammo.destroy(btHalfExtents);
+  return collisionShape;
+};
+
+const _createConeShape = function({x, y, z} = halfExtents, cylinderAxis) {
+  switch (cylinderAxis) {
+  case "y":
+    return new Ammo.btConeShape(Math.max(x, z), y * 2);
+  case "x":
+    return new Ammo.btConeShapeX(Math.max(y, z), x * 2);
+  case "z":
+    return new Ammo.btConeShapeZ(Math.max(x, y), z * 2);
+  }
+  return null;
+};
+
+const _createCapsuleShape = function({x, y, z} = halfExtents, capsuleAxis) {
+  switch (capsuleAxis) {
+  case "y":
+    return new Ammo.btCapsuleShape(Math.max(x, z), y * 2);
+  case "x":
+    return new Ammo.btCapsuleShapeX(Math.max(y, z), x * 2);
+  case "z":
+    return new Ammo.btCapsuleShapeZ(Math.max(x, y), z * 2);
+  }
+  return null;
+};
+
+const _createHullShape = (function() {
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  return function(sceneRoot, margin, vertices, maxVertices) {
+    sceneRoot.matrixWorld.decompose(pos, quat, scale);
+    const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
+    const vec3 = new Ammo.btVector3();
+    const originalHull = new Ammo.btConvexHullShape();
+    originalHull.setMargin(margin);
+    if (vertices.length > maxVertices) {
+      console.warn(
+        "too many vertices for hull shape; randomly sampling " +
+          maxVertices +
+          " from " +
+          vertices.length +
+          " vertices"
+      );
+      vertices = getRandomSample(vertices, maxVertices);
+    }
+    for (let i = 0; i < vertices.length; i++) {
+      vec3.setValue(vertices[i].x, vertices[i].y, vertices[i].z);
+      originalHull.addPoint(vec3, i == vertices.length - 1);
+    }
+
+    let collisionShape = originalHull;
+    if (originalHull.getNumVertices() >= 100 || true) {
+      //Bullet documentation says don't use convexHulls with 100 verts or more
+      const shapeHull = new Ammo.btShapeHull(originalHull);
+      shapeHull.buildHull(margin);
+      Ammo.destroy(originalHull);
+      collisionShape = new Ammo.btConvexHullShape(
+        Ammo.getPointer(shapeHull.getVertexPointer()),
+        shapeHull.numVertices()
+      );
+      collisionShape.resources = [shapeHull];
+    }
+    collisionShape.setLocalScaling(localScale);
+    Ammo.destroy(localScale);
+    Ammo.destroy(vec3);
+    return collisionShape;
+  };
+})();
+
+const _createTriMeshShape = (function() {
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  return function(sceneRoot, vertices) {
+    sceneRoot.matrixWorld.decompose(pos, quat, scale);
+    const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
+    const a = new Ammo.btVector3();
+    const b = new Ammo.btVector3();
+    const c = new Ammo.btVector3();
+    const triMesh = new Ammo.btTriangleMesh(true, false);
+
+    for (let j = 0; j < vertices.length; j += 3) {
+      a.setValue(vertices[j].x, vertices[j].y, vertices[j].z);
+      b.setValue(vertices[j + 1].x, vertices[j + 1].y, vertices[j + 1].z);
+      c.setValue(vertices[j + 2].x, vertices[j + 2].y, vertices[j + 2].z);
+      triMesh.addTriangle(a, b, c, j == vertices.length - 3);
+      //TODO: limit number of triangles?
+    }
+
+    const collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
+    collisionShape.setLocalScaling(localScale);
+    collisionShape.resources = [triMesh];
+    Ammo.destroy(localScale);
+    Ammo.destroy(a);
+    Ammo.destroy(b);
+    Ammo.destroy(c);
+    return collisionShape;
+  };
+})();
+
+const computeRadius = (function() {
+  const sphere = new THREE.Sphere();
+  return function(vertices) {
+    sphere.setFromPoints(vertices);
+    return isFinite(sphere.radius) ? sphere.radius : 1;
+  };
+})();
+
+const computeHalfExtents = (function() {
+  const box = new THREE.Box3();
+  return function(vertices, target) {
+    box.setFromPoints(vertices);
+    return target.subVectors(box.max, box.min).multiplyScalar(0.5);
   };
 })();
 
