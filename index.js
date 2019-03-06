@@ -252,10 +252,16 @@ const getRandomSample = (function() {
   };
 })();
 
+
+// Whether this THREE.Object3D is a mesh we should take into account for our shape.
+function _shouldInclude(obj) {
+  return obj.isMesh && (!THREE.Sky || obj.__proto__ != THREE.Sky.prototype);
+}
+
 function _getMeshes(sceneRoot) {
   let meshes = [];
   sceneRoot.traverse(o => {
-    if (o.isMesh && (!THREE.Sky || o.__proto__ != THREE.Sky.prototype)) {
+    if (_shouldInclude(o)) {
       meshes.push(o);
     }
   });
