@@ -50,38 +50,35 @@ exports.createCollisionShape = (function() {
       }
     }
 
-    if (autoGenerateShape) {
-      vertices = _getVertices(sceneRoot, meshes);
-    }
-
     //TODO: Support convex hull decomposition, compound shapes, gimpact (dynamic trimesh)
     switch (type) {
     case Type.BOX: {
-      const bounds = options.halfExtents || computeHalfExtents(vertices, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
+      const bounds = options.halfExtents || computeHalfExtents(sceneRoot, meshes, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
       collisionShape = _createBoxShape(bounds);
       break;
     }
     case Type.CYLINDER: {
-      const bounds = options.halfExtents || computeHalfExtents(vertices, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
+      const bounds = options.halfExtents || computeHalfExtents(sceneRoot, meshes, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
       collisionShape = _createCylinderShape(bounds, cylinderAxis);
       break;
     }
     case Type.CAPSULE: {
-      const bounds = options.halfExtents || computeHalfExtents(vertices, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
+      const bounds = options.halfExtents || computeHalfExtents(sceneRoot, meshes, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
       collisionShape = _createCapsuleShape(bounds, cylinderAxis);
       break;
     }
     case Type.CONE: {
-      const bounds = options.halfExtents || computeHalfExtents(vertices, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
+      const bounds = options.halfExtents || computeHalfExtents(sceneRoot, meshes, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
       collisionShape = _createConeShape(bounds, cylinderAxis);
       break;
     }
     case Type.SPHERE: {
-      const radius = options.sphereRadius || computeRadius(vertices);
+      const radius = options.sphereRadius || computeRadius(_getVertices(sceneRoot, meshes));
       collisionShape = new Ammo.btSphereShape(radius);
       break;
     }
     case Type.HULL: {
+      let vertices = _getVertices(sceneRoot, meshes);
       if (vertices.length > hullMaxVertices) {
         console.warn(
           "too many vertices for hull shape; randomly sampling " +
@@ -96,7 +93,7 @@ exports.createCollisionShape = (function() {
       break;
     }
     case Type.MESH: {
-      collisionShape = _createTriMeshShape(sceneRoot, vertices);
+      collisionShape = _createTriMeshShape(sceneRoot, _getVertices(sceneRoot, meshes));
       break;
     }
     default:
@@ -179,7 +176,6 @@ const _createHullShape = (function() {
       vec3.setValue(vertices[i].x, vertices[i].y, vertices[i].z);
       originalHull.addPoint(vec3, i == vertices.length - 1);
     }
-
     let collisionShape = originalHull;
     if (originalHull.getNumVertices() >= 100 || true) {
       //Bullet documentation says don't use convexHulls with 100 verts or more
@@ -238,11 +234,52 @@ const computeRadius = (function() {
   };
 })();
 
+const getBufferGeometry = (function() {
+  const bufferGeometry = new THREE.BufferGeometry();
+  return function(geo) {
+    return geo.isBufferGeometry ? geo : bufferGeometry.fromGeometry(geo);
+  };
+})();
+
 const computeHalfExtents = (function() {
-  const box = new THREE.Box3();
-  return function(vertices, target) {
-    box.setFromPoints(vertices);
-    return target.subVectors(box.max, box.min).multiplyScalar(0.5);
+  const v = new THREE.Vector3();
+  const matrix = new THREE.Matrix4();
+  const inverse = new THREE.Matrix4();
+  const min = new THREE.Vector3();
+  const max = new THREE.Vector3();
+  const bufferGeometry = new THREE.BufferGeometry();
+  return function(sceneRoot, meshes, target) {
+
+    let minX = + Infinity;
+    let minY = + Infinity;
+    let minZ = + Infinity;
+    let maxX = - Infinity;
+    let maxY = - Infinity;
+    let maxZ = - Infinity;
+
+    inverse.getInverse(sceneRoot.matrixWorld);
+
+    for (let mesh of meshes) {
+      const geometry = getBufferGeometry(mesh.geometry);
+      const components = geometry.attributes.position.array;
+      if (mesh !== sceneRoot) {
+        matrix.multiplyMatrices(inverse, mesh.matrixWorld);
+      } else {
+        matrix.identity();
+      }
+      for (let i = 0; i < components.length; i += 3) {
+        v.set(components[i], components[i + 1], components[i + 2]);
+        v.applyMatrix4(matrix);
+		if ( v.x < minX ) minX = v.x;
+		if ( v.y < minY ) minY = v.y;
+		if ( v.z < minZ ) minZ = v.z;
+		if ( v.x > maxX ) maxX = v.x;
+		if ( v.y > maxY ) maxY = v.y;
+		if ( v.z > maxZ ) maxZ = v.z;
+      }
+    }
+
+    return target.set(maxX - minX, maxY - minY, maxZ - minZ).multiplyScalar(0.5);
   };
 })();
 
