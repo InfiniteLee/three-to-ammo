@@ -82,7 +82,17 @@ exports.createCollisionShape = (function() {
       break;
     }
     case Type.HULL: {
-      collisionShape = _createHullShape(sceneRoot, margin, vertices, hullMaxVertices);
+      if (vertices.length > hullMaxVertices) {
+        console.warn(
+          "too many vertices for hull shape; randomly sampling " +
+            hullMaxVertices +
+            " from " +
+            vertices.length +
+            " vertices"
+        );
+        vertices = getRandomSample(vertices, hullMaxVertices);
+      }
+      collisionShape = _createHullShape(sceneRoot, vertices, margin);
       break;
     }
     case Type.MESH: {
@@ -159,22 +169,12 @@ const _createHullShape = (function() {
   const pos = new THREE.Vector3();
   const quat = new THREE.Quaternion();
   const scale = new THREE.Vector3();
-  return function(sceneRoot, margin, vertices, maxVertices) {
+  return function(sceneRoot, vertices, margin) {
     sceneRoot.matrixWorld.decompose(pos, quat, scale);
     const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
     const vec3 = new Ammo.btVector3();
     const originalHull = new Ammo.btConvexHullShape();
     originalHull.setMargin(margin);
-    if (vertices.length > maxVertices) {
-      console.warn(
-        "too many vertices for hull shape; randomly sampling " +
-          maxVertices +
-          " from " +
-          vertices.length +
-          " vertices"
-      );
-      vertices = getRandomSample(vertices, maxVertices);
-    }
     for (let i = 0; i < vertices.length; i++) {
       vec3.setValue(vertices[i].x, vertices[i].y, vertices[i].z);
       originalHull.addPoint(vec3, i == vertices.length - 1);
