@@ -157,10 +157,11 @@ const _createHullShape = (function() {
   const scale = new THREE.Vector3();
   const matrix = new THREE.Matrix4();
   const inverse = new THREE.Matrix4();
+  const vertex = new THREE.Vector3();
   return function(sceneRoot, meshes, margin, maxVertices) {
     sceneRoot.matrixWorld.decompose(pos, quat, scale);
     const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
-    const v = new Ammo.btVector3();
+    const btVertex = new Ammo.btVector3();
     const originalHull = new Ammo.btConvexHullShape();
     originalHull.setMargin(margin);
     inverse.getInverse(sceneRoot.matrixWorld);
@@ -190,8 +191,9 @@ const _createHullShape = (function() {
       }
       for (let i = 0; i < components.length; i += 3) {
         if (Math.random() <= p) {
-          v.setValue(components[i], components[i + 1], components[i + 2]);
-          originalHull.addPoint(v, i === components.length - 3);
+          vertex.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(matrix);
+          btVertex.setValue(vertex.x, vertex.y, vertex.z);
+          originalHull.addPoint(btVertex, i === components.length - 3);
         }
       }
     }
@@ -210,7 +212,7 @@ const _createHullShape = (function() {
     }
     collisionShape.setLocalScaling(localScale);
     Ammo.destroy(localScale);
-    Ammo.destroy(v);
+    Ammo.destroy(btVertex);
     return collisionShape;
   };
 })();
@@ -221,11 +223,14 @@ const _createTriMeshShape = (function() {
   const scale = new THREE.Vector3();
   const matrix = new THREE.Matrix4();
   const inverse = new THREE.Matrix4();
+  const va = new THREE.Vector3();
+  const vb = new THREE.Vector3();
+  const vc = new THREE.Vector3();
   return function(sceneRoot, meshes) {
     //TODO: limit number of triangles?
-    const a = new Ammo.btVector3();
-    const b = new Ammo.btVector3();
-    const c = new Ammo.btVector3();
+    const bta = new Ammo.btVector3();
+    const btb = new Ammo.btVector3();
+    const btc = new Ammo.btVector3();
     const triMesh = new Ammo.btTriangleMesh(true, false);
     inverse.getInverse(sceneRoot.matrixWorld);
 
@@ -244,17 +249,23 @@ const _createTriMeshShape = (function() {
           const ai = geometry.index[i];
           const bi = geometry.index[i + 1];
           const ci = geometry.index[i + 2];
-          a.setValue(components[ai], components[ai + 1], components[ai + 2]);
-          b.setValue(components[bi], components[bi + 1], components[bi + 2]);
-          c.setValue(components[ci], components[ci + 1], components[ci + 2]);
-          triMesh.addTriangle(a, b, c, isLastMesh && i == geometry.index.length - 3);
+          va.set(components[ai], components[ai + 1], components[ai + 2]).applyMatrix4(matrix);
+          vb.set(components[bi], components[bi + 1], components[bi + 2]).applyMatrix4(matrix);
+          vc.set(components[ci], components[ci + 1], components[ci + 2]).applyMatrix4(matrix);
+          bta.setValue(va.x, va.y, va.z);
+          btb.setValue(vb.x, vb.y, vb.z);
+          btc.setValue(vc.x, vc.y, vc.z);
+          triMesh.addTriangle(bta, btb, btc, isLastMesh && i == geometry.index.length - 3);
         }
       } else {
         for (let i = 0; i < components.length; i += 9) {
-          a.setValue(components[i + 0], components[i + 1], components[i + 2]);
-          b.setValue(components[i + 3], components[i + 4], components[i + 5]);
-          c.setValue(components[i + 6], components[i + 7], components[i + 8]);
-          triMesh.addTriangle(a, b, c, isLastMesh && i == components.length - 9);
+          va.set(components[i + 0], components[i + 1], components[i + 2]).applyMatrix4(matrix);
+          vb.set(components[i + 3], components[i + 4], components[i + 5]).applyMatrix4(matrix);
+          vc.set(components[i + 6], components[i + 7], components[i + 8]).applyMatrix4(matrix);
+          bta.setValue(va.x, va.y, va.z);
+          btb.setValue(vb.x, vb.y, vb.z);
+          btc.setValue(vc.x, vc.y, vc.z);
+          triMesh.addTriangle(bta, btb, btc, isLastMesh && i == components.length - 9);
         }
       }
     }
@@ -265,9 +276,9 @@ const _createTriMeshShape = (function() {
     collisionShape.setLocalScaling(localScale);
     collisionShape.resources = [triMesh];
     Ammo.destroy(localScale);
-    Ammo.destroy(a);
-    Ammo.destroy(b);
-    Ammo.destroy(c);
+    Ammo.destroy(bta);
+    Ammo.destroy(btb);
+    Ammo.destroy(btc);
     return collisionShape;
   };
 })();
@@ -282,6 +293,7 @@ const getBufferGeometry = (function() {
 const computeSphere = (function() {
   const matrix = new THREE.Matrix4();
   const inverse = new THREE.Matrix4();
+  const vertex = new THREE.Vector3();
   return function(sceneRoot, meshes, bounds, target) {
 
     let { x: cx, y: cy, z: cz } = bounds.getCenter(target.center);
@@ -297,9 +309,10 @@ const computeSphere = (function() {
         matrix.identity();
       }
       for (let i = 0; i < components.length; i += 3) {
-        const dx = cx - components[i];
-        const dy = cy - components[i + 1];
-        const dz = cz - components[i + 2];
+        vertex.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(matrix);
+        const dx = cx - vertex.x;
+        const dy = cy - vertex.y;
+        const dz = cz - vertex.z;
         maxRadiusSq = Math.max(maxRadiusSq, dx * dx + dy * dy + dz * dz);
       }
     }
@@ -332,8 +345,7 @@ const computeBounds = (function() {
         matrix.identity();
       }
       for (let i = 0; i < components.length; i += 3) {
-        v.set(components[i], components[i + 1], components[i + 2]);
-        v.applyMatrix4(matrix);
+        v.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(matrix);
 		if ( v.x < minX ) minX = v.x;
 		if ( v.y < minY ) minY = v.y;
 		if ( v.z < minZ ) minZ = v.z;
@@ -348,39 +360,6 @@ const computeBounds = (function() {
     return target;
   };
 })();
-
-//https://stackoverflow.com/a/37835673
-const getRandomSample = (function() {
-  const swaps = [];
-  return function(array, size) {
-    let r,
-      i = array.length,
-      end = i - size,
-      temp;
-
-    while (i-- > end) {
-      r = Math.floor(Math.random() * (i + 1));
-      temp = array[r];
-      array[r] = array[i];
-      array[i] = temp;
-      swaps.push(i);
-      swaps.push(r);
-    }
-
-    const sample = array.slice(end);
-
-    while (size--) {
-      i = swaps.pop();
-      r = swaps.pop();
-      temp = array[i];
-      array[i] = array[r];
-      array[r] = temp;
-    }
-
-    return sample;
-  };
-})();
-
 
 // Whether this THREE.Object3D is a mesh we should take into account for our shape.
 function _shouldInclude(obj) {
