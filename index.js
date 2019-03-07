@@ -25,50 +25,42 @@ exports.createCollisionShape = (function() {
     const cylinderAxis = options.cylinderAxis || "y";
     const margin = options.hasOwnProperty("margin") ? options.margin : 0.01;
 
-    let collisionShape;
-    let meshes;
-
     if ((mergeGeometry || autoGenerateShape) && !sceneRoot) {
       console.warn("cannot use mergeGeometry, autoGenerateShape, or recenter if sceneRoot is null");
       return null;
     }
 
-    if (mergeGeometry) {
-      meshes = _getMeshes(sceneRoot);
-    } else {
-      meshes = [sceneRoot];
-    }
-
     const computeRadius = function() {
-      computeBounds(sceneRoot, meshes, bounds);
-      computeSphere(sceneRoot, meshes, bounds, sphere);
+      _computeBounds(sceneRoot, mergeGeometry, bounds);
+      _computeSphere(sceneRoot, mergeGeometry, bounds, sphere);
       return sphere.radius;
     };
 
     const computeHalfExtents = function() {
-      computeBounds(sceneRoot, meshes, bounds);
+      _computeBounds(sceneRoot, mergeGeometry, bounds);
       return halfExtents.subVectors(bounds.max, bounds.min).multiplyScalar(0.5).clampScalar(minHalfExtent, maxHalfExtent);
     };
 
     //TODO: Support convex hull decomposition, compound shapes, gimpact (dynamic trimesh)
+    let collisionShape;
     switch (type) {
     case Type.BOX: {
-      const hx = options.halfExtents || computeHalfExtents();
+      const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
       collisionShape = _createBoxShape(hx);
       break;
     }
     case Type.CYLINDER: {
-      const hx = options.halfExtents || computeHalfExtents();
+      const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
       collisionShape = _createCylinderShape(hx, cylinderAxis);
       break;
     }
     case Type.CAPSULE: {
-      const hx = options.halfExtents || computeHalfExtents();
+      const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
       collisionShape = _createCapsuleShape(hx, cylinderAxis);
       break;
     }
     case Type.CONE: {
-      const hx = options.halfExtents || computeHalfExtents();
+      const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
       collisionShape = _createConeShape(hx, cylinderAxis);
       break;
     }
@@ -78,11 +70,11 @@ exports.createCollisionShape = (function() {
       break;
     }
     case Type.HULL: {
-      collisionShape = _createHullShape(sceneRoot, meshes, margin, options.hullMaxVertices || 100000);
+      collisionShape = _createHullShape(sceneRoot, mergeGeometry, margin, options.hullMaxVertices || 100000);
       break;
     }
     case Type.MESH: {
-      collisionShape = _createTriMeshShape(sceneRoot, meshes);
+      collisionShape = _createTriMeshShape(sceneRoot, mergeGeometry);
       break;
     }
     default:
@@ -100,6 +92,83 @@ exports.createCollisionShape = (function() {
     };
 
     return collisionShape;
+  };
+})();
+
+function _iterateMeshes(sceneRoot, mergeGeometry, cb) {
+  if (!mergeGeometry) {
+    cb(sceneRoot);
+  } else {
+    sceneRoot.traverse(obj => {
+      if (obj.isMesh && (!THREE.Sky || obj.__proto__ != THREE.Sky.prototype)) {
+        cb(obj);
+      }
+    });
+  }
+}
+
+const _iterateGeometries = (function() {
+  const transform = new THREE.Matrix4();
+  const inverse = new THREE.Matrix4();
+  const bufferGeometry = new THREE.BufferGeometry();
+  return function(sceneRoot, mergeGeometry, cb) {
+    inverse.getInverse(sceneRoot.matrixWorld);
+    _iterateMeshes(sceneRoot, mergeGeometry, mesh => {
+      const geo = mesh.geometry.isBufferGeometry ? mesh.geometry : bufferGeometry.fromGeometry(mesh.geometry);
+      if (mesh !== sceneRoot) {
+        transform.multiplyMatrices(inverse, mesh.matrixWorld);
+      } else {
+        transform.identity();
+      }
+      cb(geo, transform);
+    });
+  };
+})();
+
+const _computeSphere = (function() {
+  const v = new THREE.Vector3();
+  return function(sceneRoot, mergeGeometry, bounds, target) {
+    let maxRadiusSq = 0;
+    let { x: cx, y: cy, z: cz } = bounds.getCenter(target.center);
+    _iterateGeometries(sceneRoot, mergeGeometry, (geo, transform) => {
+      const components = geo.attributes.position.array;
+      for (let i = 0; i < components.length; i += 3) {
+        v.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
+        const dx = cx - v.x;
+        const dy = cy - v.y;
+        const dz = cz - v.z;
+        maxRadiusSq = Math.max(maxRadiusSq, dx * dx + dy * dy + dz * dz);
+      }
+    });
+    target.radius = Math.sqrt(maxRadiusSq);
+    return target;
+  };
+})();
+
+const _computeBounds = (function() {
+  const v = new THREE.Vector3();
+  return function(sceneRoot, mergeGeometry, target) {
+    let minX = + Infinity;
+    let minY = + Infinity;
+    let minZ = + Infinity;
+    let maxX = - Infinity;
+    let maxY = - Infinity;
+    let maxZ = - Infinity;
+    _iterateGeometries(sceneRoot, mergeGeometry, (geo, transform) => {
+      const components = geo.attributes.position.array;
+      for (let i = 0; i < components.length; i += 3) {
+        v.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
+		if ( v.x < minX ) minX = v.x;
+		if ( v.y < minY ) minY = v.y;
+		if ( v.z < minZ ) minZ = v.z;
+		if ( v.x > maxX ) maxX = v.x;
+		if ( v.y > maxY ) maxY = v.y;
+		if ( v.z > maxZ ) maxZ = v.z;
+      }
+    });
+    target.min.set(minX, minY, minZ);
+    target.max.set(maxX, maxY, maxZ);
+    return target;
   };
 })();
 
@@ -155,23 +224,18 @@ const _createHullShape = (function() {
   const pos = new THREE.Vector3();
   const quat = new THREE.Quaternion();
   const scale = new THREE.Vector3();
-  const matrix = new THREE.Matrix4();
-  const inverse = new THREE.Matrix4();
   const vertex = new THREE.Vector3();
-  return function(sceneRoot, meshes, margin, maxVertices) {
+  return function(sceneRoot, mergeGeometry, margin, maxVertices) {
     sceneRoot.matrixWorld.decompose(pos, quat, scale);
     const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
     const btVertex = new Ammo.btVector3();
     const originalHull = new Ammo.btConvexHullShape();
     originalHull.setMargin(margin);
-    inverse.getInverse(sceneRoot.matrixWorld);
 
     let vertexCount = 0;
-    for (let mesh of meshes) {
-      const geometry = getBufferGeometry(mesh.geometry);
-      const components = geometry.attributes.position.array;
-      vertexCount += components.length / 3;
-    }
+    _iterateGeometries(sceneRoot, mergeGeometry, (geo) => {
+      vertexCount += geo.attributes.position.array.length / 3;
+    });
 
     console.log(`Creating hull shape with ${vertexCount} vertices.`);
     if (vertexCount > maxVertices) {
@@ -179,24 +243,16 @@ const _createHullShape = (function() {
     }
     const p = Math.min(1, maxVertices / vertexCount);
 
-    for (let mi = 0; mi < meshes.length; mi++) {
-      const mesh = meshes[mi];
-      const isLastMesh = mi === meshes.length - 1;
-      const geometry = getBufferGeometry(mesh.geometry);
-      const components = geometry.attributes.position.array;
-      if (mesh !== sceneRoot) {
-        matrix.multiplyMatrices(inverse, mesh.matrixWorld);
-      } else {
-        matrix.identity();
-      }
+    _iterateGeometries(sceneRoot, mergeGeometry, (geo, transform) => {
+      const components = geo.attributes.position.array;
       for (let i = 0; i < components.length; i += 3) {
         if (Math.random() <= p) {
-          vertex.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(matrix);
+          vertex.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
           btVertex.setValue(vertex.x, vertex.y, vertex.z);
           originalHull.addPoint(btVertex, i === components.length - 3);
         }
       }
-    }
+    });
 
     let collisionShape = originalHull;
     if (originalHull.getNumVertices() >= 100) {
@@ -221,54 +277,43 @@ const _createTriMeshShape = (function() {
   const pos = new THREE.Vector3();
   const quat = new THREE.Quaternion();
   const scale = new THREE.Vector3();
-  const matrix = new THREE.Matrix4();
-  const inverse = new THREE.Matrix4();
   const va = new THREE.Vector3();
   const vb = new THREE.Vector3();
   const vc = new THREE.Vector3();
-  return function(sceneRoot, meshes) {
+  return function(sceneRoot, mergeGeometry) {
     //TODO: limit number of triangles?
     const bta = new Ammo.btVector3();
     const btb = new Ammo.btVector3();
     const btc = new Ammo.btVector3();
     const triMesh = new Ammo.btTriangleMesh(true, false);
-    inverse.getInverse(sceneRoot.matrixWorld);
 
-    for (let mi = 0; mi < meshes.length; mi++) {
-      const mesh = meshes[mi];
-      const isLastMesh = mi === meshes.length - 1;
-      const geometry = getBufferGeometry(mesh.geometry);
-      const components = geometry.attributes.position.array;
-      if (mesh !== sceneRoot) {
-        matrix.multiplyMatrices(inverse, mesh.matrixWorld);
-      } else {
-        matrix.identity();
-      }
-      if (geometry.index) {
-        for (let i = 0; i < geometry.index.length; i += 3) {
-          const ai = geometry.index[i];
-          const bi = geometry.index[i + 1];
-          const ci = geometry.index[i + 2];
-          va.set(components[ai], components[ai + 1], components[ai + 2]).applyMatrix4(matrix);
-          vb.set(components[bi], components[bi + 1], components[bi + 2]).applyMatrix4(matrix);
-          vc.set(components[ci], components[ci + 1], components[ci + 2]).applyMatrix4(matrix);
+    _iterateGeometries(sceneRoot, mergeGeometry, (geo, transform) => {
+      const components = geo.attributes.position.array;
+      if (geo.index) {
+        for (let i = 0; i < geo.index.length; i += 3) {
+          const ai = geo.index[i];
+          const bi = geo.index[i + 1];
+          const ci = geo.index[i + 2];
+          va.set(components[ai], components[ai + 1], components[ai + 2]).applyMatrix4(transform);
+          vb.set(components[bi], components[bi + 1], components[bi + 2]).applyMatrix4(transform);
+          vc.set(components[ci], components[ci + 1], components[ci + 2]).applyMatrix4(transform);
           bta.setValue(va.x, va.y, va.z);
           btb.setValue(vb.x, vb.y, vb.z);
           btc.setValue(vc.x, vc.y, vc.z);
-          triMesh.addTriangle(bta, btb, btc, isLastMesh && i == geometry.index.length - 3);
+          triMesh.addTriangle(bta, btb, btc, false);
         }
       } else {
         for (let i = 0; i < components.length; i += 9) {
-          va.set(components[i + 0], components[i + 1], components[i + 2]).applyMatrix4(matrix);
-          vb.set(components[i + 3], components[i + 4], components[i + 5]).applyMatrix4(matrix);
-          vc.set(components[i + 6], components[i + 7], components[i + 8]).applyMatrix4(matrix);
+          va.set(components[i + 0], components[i + 1], components[i + 2]).applyMatrix4(transform);
+          vb.set(components[i + 3], components[i + 4], components[i + 5]).applyMatrix4(transform);
+          vc.set(components[i + 6], components[i + 7], components[i + 8]).applyMatrix4(transform);
           bta.setValue(va.x, va.y, va.z);
           btb.setValue(vb.x, vb.y, vb.z);
           btc.setValue(vc.x, vc.y, vc.z);
-          triMesh.addTriangle(bta, btb, btc, isLastMesh && i == components.length - 9);
+          triMesh.addTriangle(bta, btb, btc, false);
         }
       }
-    }
+    });
 
     sceneRoot.matrixWorld.decompose(pos, quat, scale);
     const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
@@ -282,96 +327,3 @@ const _createTriMeshShape = (function() {
     return collisionShape;
   };
 })();
-
-const getBufferGeometry = (function() {
-  const bufferGeometry = new THREE.BufferGeometry();
-  return function(geo) {
-    return geo.isBufferGeometry ? geo : bufferGeometry.fromGeometry(geo);
-  };
-})();
-
-const computeSphere = (function() {
-  const matrix = new THREE.Matrix4();
-  const inverse = new THREE.Matrix4();
-  const vertex = new THREE.Vector3();
-  return function(sceneRoot, meshes, bounds, target) {
-
-    let { x: cx, y: cy, z: cz } = bounds.getCenter(target.center);
-    let maxRadiusSq = 0;
-    inverse.getInverse(sceneRoot.matrixWorld);
-
-    for (let mesh of meshes) {
-      const geometry = getBufferGeometry(mesh.geometry);
-      const components = geometry.attributes.position.array;
-      if (mesh !== sceneRoot) {
-        matrix.multiplyMatrices(inverse, mesh.matrixWorld);
-      } else {
-        matrix.identity();
-      }
-      for (let i = 0; i < components.length; i += 3) {
-        vertex.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(matrix);
-        const dx = cx - vertex.x;
-        const dy = cy - vertex.y;
-        const dz = cz - vertex.z;
-        maxRadiusSq = Math.max(maxRadiusSq, dx * dx + dy * dy + dz * dz);
-      }
-    }
-    target.radius = Math.sqrt(maxRadiusSq);
-    return target;
-  };
-})();
-
-const computeBounds = (function() {
-  const v = new THREE.Vector3();
-  const matrix = new THREE.Matrix4();
-  const inverse = new THREE.Matrix4();
-  const bufferGeometry = new THREE.BufferGeometry();
-  return function(sceneRoot, meshes, target) {
-
-    let minX = + Infinity;
-    let minY = + Infinity;
-    let minZ = + Infinity;
-    let maxX = - Infinity;
-    let maxY = - Infinity;
-    let maxZ = - Infinity;
-    inverse.getInverse(sceneRoot.matrixWorld);
-
-    for (let mesh of meshes) {
-      const geometry = getBufferGeometry(mesh.geometry);
-      const components = geometry.attributes.position.array;
-      if (mesh !== sceneRoot) {
-        matrix.multiplyMatrices(inverse, mesh.matrixWorld);
-      } else {
-        matrix.identity();
-      }
-      for (let i = 0; i < components.length; i += 3) {
-        v.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(matrix);
-		if ( v.x < minX ) minX = v.x;
-		if ( v.y < minY ) minY = v.y;
-		if ( v.z < minZ ) minZ = v.z;
-		if ( v.x > maxX ) maxX = v.x;
-		if ( v.y > maxY ) maxY = v.y;
-		if ( v.z > maxZ ) maxZ = v.z;
-      }
-    }
-
-    target.min.set(minX, minY, minZ);
-    target.max.set(maxX, maxY, maxZ);
-    return target;
-  };
-})();
-
-// Whether this THREE.Object3D is a mesh we should take into account for our shape.
-function _shouldInclude(obj) {
-  return obj.isMesh && (!THREE.Sky || obj.__proto__ != THREE.Sky.prototype);
-}
-
-function _getMeshes(sceneRoot) {
-  let meshes = [];
-  sceneRoot.traverse(o => {
-    if (_shouldInclude(o)) {
-      meshes.push(o);
-    }
-  });
-  return meshes;
-}
