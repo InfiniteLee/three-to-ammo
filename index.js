@@ -246,7 +246,6 @@ const _createHullShape = (function() {
     });
 
     // todo: might want to implement this in a deterministic way that doesn't do O(verts) calls to Math.random
-    console.log(`Creating hull shape with ${vertexCount} vertices.`);
     if (vertexCount > maxVertices) {
       console.warn(`too many vertices for hull shape; sampling ~${maxVertices} from ~${vertexCount} vertices`);
     }
