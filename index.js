@@ -12,6 +12,8 @@ const Type = (exports.Type = {
 });
 
 exports.createCollisionShape = (function() {
+  const bounds = new THREE.Box3();
+  const sphere = new THREE.Sphere();
   const halfExtents = new THREE.Vector3();
 
   return function(sceneRoot, options) {
@@ -24,7 +26,6 @@ exports.createCollisionShape = (function() {
     const margin = options.hasOwnProperty("margin") ? options.margin : 0.01;
     const hullMaxVertices = options.hullMaxVertices || 100000;
 
-    let sphereRadius = options.sphereRadius || NaN;
     let collisionShape;
     let triMesh;
     let shapeHull;
@@ -43,30 +44,41 @@ exports.createCollisionShape = (function() {
       meshes = [sceneRoot];
     }
 
+    const computeRadius = function() {
+      computeBounds(sceneRoot, meshes, bounds);
+      computeSphere(sceneRoot, meshes, bounds, sphere);
+      return sphere.radius;
+    };
+
+    const computeHalfExtents = function() {
+      computeBounds(sceneRoot, meshes, bounds);
+      return halfExtents.subVectors(bounds.max, bounds.min).multiplyScalar(0.5).clampScalar(minHalfExtent, maxHalfExtent);
+    };
+
     //TODO: Support convex hull decomposition, compound shapes, gimpact (dynamic trimesh)
     switch (type) {
     case Type.BOX: {
-      const bounds = options.halfExtents || computeHalfExtents(sceneRoot, meshes, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
-      collisionShape = _createBoxShape(bounds);
+      const hx = options.halfExtents || computeHalfExtents();
+      collisionShape = _createBoxShape(hx);
       break;
     }
     case Type.CYLINDER: {
-      const bounds = options.halfExtents || computeHalfExtents(sceneRoot, meshes, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
-      collisionShape = _createCylinderShape(bounds, cylinderAxis);
+      const hx = options.halfExtents || computeHalfExtents();
+      collisionShape = _createCylinderShape(hx, cylinderAxis);
       break;
     }
     case Type.CAPSULE: {
-      const bounds = options.halfExtents || computeHalfExtents(sceneRoot, meshes, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
-      collisionShape = _createCapsuleShape(bounds, cylinderAxis);
+      const hx = options.halfExtents || computeHalfExtents();
+      collisionShape = _createCapsuleShape(hx, cylinderAxis);
       break;
     }
     case Type.CONE: {
-      const bounds = options.halfExtents || computeHalfExtents(sceneRoot, meshes, halfExtents).clampScalar(minHalfExtent, maxHalfExtent);
-      collisionShape = _createConeShape(bounds, cylinderAxis);
+      const hx = options.halfExtents || computeHalfExtents();
+      collisionShape = _createConeShape(hx, cylinderAxis);
       break;
     }
     case Type.SPHERE: {
-      const radius = options.sphereRadius || computeRadius(_getVertices(sceneRoot, meshes));
+      const radius = !isNaN(options.sphereRadius) ? options.sphereRadius : computeRadius();
       collisionShape = new Ammo.btSphereShape(radius);
       break;
     }
@@ -219,14 +231,6 @@ const _createTriMeshShape = (function() {
   };
 })();
 
-const computeRadius = (function() {
-  const sphere = new THREE.Sphere();
-  return function(vertices) {
-    sphere.setFromPoints(vertices);
-    return isFinite(sphere.radius) ? sphere.radius : 1;
-  };
-})();
-
 const getBufferGeometry = (function() {
   const bufferGeometry = new THREE.BufferGeometry();
   return function(geo) {
@@ -234,12 +238,38 @@ const getBufferGeometry = (function() {
   };
 })();
 
-const computeHalfExtents = (function() {
+const computeSphere = (function() {
+  const matrix = new THREE.Matrix4();
+  const inverse = new THREE.Matrix4();
+  return function(sceneRoot, meshes, bounds, target) {
+
+    let { x: cx, y: cy, z: cz } = bounds.getCenter(target.center);
+    let maxRadiusSq = 0;
+
+    for (let mesh of meshes) {
+      const geometry = getBufferGeometry(mesh.geometry);
+      const components = geometry.attributes.position.array;
+      if (mesh !== sceneRoot) {
+        matrix.multiplyMatrices(inverse, mesh.matrixWorld);
+      } else {
+        matrix.identity();
+      }
+      for (let i = 0; i < components.length; i += 3) {
+        const dx = cx - components[i];
+        const dy = cy - components[i + 1];
+        const dz = cz - components[i + 2];
+        maxRadiusSq = Math.max(maxRadiusSq, dx * dx + dy * dy + dz * dz);
+      }
+    }
+    target.radius = Math.sqrt(maxRadiusSq);
+    return target;
+  };
+})();
+
+const computeBounds = (function() {
   const v = new THREE.Vector3();
   const matrix = new THREE.Matrix4();
   const inverse = new THREE.Matrix4();
-  const min = new THREE.Vector3();
-  const max = new THREE.Vector3();
   const bufferGeometry = new THREE.BufferGeometry();
   return function(sceneRoot, meshes, target) {
 
@@ -272,7 +302,9 @@ const computeHalfExtents = (function() {
       }
     }
 
-    return target.set(maxX - minX, maxY - minY, maxZ - minZ).multiplyScalar(0.5);
+    target.min.set(minX, minY, minZ);
+    target.max.set(maxX, maxY, maxZ);
+    return target;
   };
 })();
 
