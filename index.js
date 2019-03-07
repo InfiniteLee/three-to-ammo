@@ -302,10 +302,10 @@ const _createTriMeshShape = (function() {
     _iterateGeometries(root, mergeGeometry, (geo, transform) => {
       const components = geo.attributes.position.array;
       if (geo.index) {
-        for (let i = 0; i < geo.index.length; i += 3) {
-          const ai = geo.index[i];
-          const bi = geo.index[i + 1];
-          const ci = geo.index[i + 2];
+        for (let i = 0; i < geo.index.array.length; i += 3) {
+          const ai = geo.index.array[i] * 3;
+          const bi = geo.index.array[i + 1] * 3;
+          const ci = geo.index.array[i + 2] * 3;
           va.set(components[ai], components[ai + 1], components[ai + 2]).applyMatrix4(transform);
           vb.set(components[bi], components[bi + 1], components[bi + 2]).applyMatrix4(transform);
           vc.set(components[ci], components[ci + 1], components[ci + 2]).applyMatrix4(transform);
