@@ -18,7 +18,6 @@ exports.createCollisionShape = (function() {
     const autoGenerateShape = options.hasOwnProperty("autoGenerateShape") ? options.autoGenerateShape : true;
     const mergeGeometry = options.hasOwnProperty("mergeGeometry") ? options.mergeGeometry : true;
     const type = options.type || Type.HULL;
-    const recenter = options.hasOwnProperty("recenter") ? options.recenter : false;
     const minHalfExtent = options.hasOwnProperty("minHalfExtent") ? options.minHalfExtent : 0;
     const maxHalfExtent = options.hasOwnProperty("maxHalfExtent") ? options.maxHalfExtent : Number.POSITIVE_INFINITY;
     const cylinderAxis = options.cylinderAxis || "y";
@@ -42,12 +41,6 @@ exports.createCollisionShape = (function() {
       meshes = _getMeshes(sceneRoot);
     } else {
       meshes = [sceneRoot];
-    }
-
-    if (type !== "mesh") {
-      if (recenter) {
-        _recenter(sceneRoot, meshes);
-      }
     }
 
     //TODO: Support convex hull decomposition, compound shapes, gimpact (dynamic trimesh)
@@ -380,57 +373,5 @@ const _getVertices = (function() {
     }
 
     return vertices;
-  };
-})();
-
-const _recenter = (function() {
-  const geometries = [];
-  const offset = new THREE.Matrix4();
-  const center = new THREE.Vector3();
-
-  return function(sceneRoot, meshes) {
-    if (meshes.length === 1) {
-      meshes[0].geometry.center();
-      return;
-    }
-
-    const { min, max } = _getBoundingBox(meshes);
-    center.addVectors(max, min).multiplyScalar(-0.5);
-    offset.makeTranslation(center.x, center.y, center.z);
-
-    for (let j = 0; j < meshes.length; j++) {
-      const mesh = meshes[j];
-      if (geometries.indexOf(mesh.geometry.uuid) !== -1) {
-        continue;
-      }
-      mesh.geometry.applyMatrix(offset);
-      geometries.push(mesh.geometry.uuid);
-    }
-  };
-})();
-
-const _getBoundingBox = (function() {
-  const boundingBox = {
-    min: new THREE.Vector3(Number.MAX_VALUE),
-    max: new THREE.Vector3(Number.MIN_VALUE)
-  };
-
-  return function(meshes) {
-    for (let i = 0; i < meshes.length; ++i) {
-      const mesh = meshes[i];
-      if (!mesh.geometry.boundingBox) {
-        mesh.geometry.computeBoundingBox();
-      }
-      const box = mesh.geometry.boundingBox;
-
-      boundingBox.min.x = Math.min(box.min.x, box.min.x);
-      boundingBox.min.y = Math.min(box.min.y, box.min.y);
-      boundingBox.min.z = Math.min(box.min.z, box.min.z);
-
-      boundingBox.max.x = Math.max(box.max.x, box.max.x);
-      boundingBox.max.y = Math.max(box.max.y, box.max.y);
-      boundingBox.max.z = Math.max(box.max.z, box.max.z);
-    }
-    return boundingBox;
   };
 })();
