@@ -38,48 +38,51 @@ exports.createCollisionShape = (function() {
 
     const computeHalfExtents = function() {
       _computeBounds(sceneRoot, mergeGeometry, bounds);
-      return halfExtents.subVectors(bounds.max, bounds.min).multiplyScalar(0.5).clampScalar(minHalfExtent, maxHalfExtent);
+      return halfExtents
+        .subVectors(bounds.max, bounds.min)
+        .multiplyScalar(0.5)
+        .clampScalar(minHalfExtent, maxHalfExtent);
     };
 
     //TODO: Support convex hull decomposition, compound shapes, gimpact (dynamic trimesh)
     let collisionShape;
     switch (type) {
-    case Type.BOX: {
-      const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
-      collisionShape = _createBoxShape(hx);
-      break;
-    }
-    case Type.CYLINDER: {
-      const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
-      collisionShape = _createCylinderShape(hx, cylinderAxis);
-      break;
-    }
-    case Type.CAPSULE: {
-      const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
-      collisionShape = _createCapsuleShape(hx, cylinderAxis);
-      break;
-    }
-    case Type.CONE: {
-      const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
-      collisionShape = _createConeShape(hx, cylinderAxis);
-      break;
-    }
-    case Type.SPHERE: {
-      const radius = !isNaN(options.sphereRadius) ? options.sphereRadius : computeRadius();
-      collisionShape = new Ammo.btSphereShape(radius);
-      break;
-    }
-    case Type.HULL: {
-      collisionShape = _createHullShape(sceneRoot, mergeGeometry, margin, options.hullMaxVertices || 100000);
-      break;
-    }
-    case Type.MESH: {
-      collisionShape = _createTriMeshShape(sceneRoot, mergeGeometry);
-      break;
-    }
-    default:
-      console.warn(type + " is not currently supported");
-      return null;
+      case Type.BOX: {
+        const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
+        collisionShape = _createBoxShape(hx);
+        break;
+      }
+      case Type.CYLINDER: {
+        const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
+        collisionShape = _createCylinderShape(hx, cylinderAxis);
+        break;
+      }
+      case Type.CAPSULE: {
+        const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
+        collisionShape = _createCapsuleShape(hx, cylinderAxis);
+        break;
+      }
+      case Type.CONE: {
+        const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
+        collisionShape = _createConeShape(hx, cylinderAxis);
+        break;
+      }
+      case Type.SPHERE: {
+        const radius = !isNaN(options.sphereRadius) ? options.sphereRadius : computeRadius();
+        collisionShape = new Ammo.btSphereShape(radius);
+        break;
+      }
+      case Type.HULL: {
+        collisionShape = _createHullShape(sceneRoot, mergeGeometry, margin, options.hullMaxVertices || 100000);
+        break;
+      }
+      case Type.MESH: {
+        collisionShape = _createTriMeshShape(sceneRoot, mergeGeometry);
+        break;
+      }
+      default:
+        console.warn(type + " is not currently supported");
+        return null;
     }
 
     collisionShape.type = type;
@@ -155,22 +158,22 @@ const _computeSphere = (function() {
 const _computeBounds = (function() {
   const v = new THREE.Vector3();
   return function(root, mergeGeometry, target) {
-    let minX = + Infinity;
-    let minY = + Infinity;
-    let minZ = + Infinity;
-    let maxX = - Infinity;
-    let maxY = - Infinity;
-    let maxZ = - Infinity;
+    let minX = +Infinity;
+    let minY = +Infinity;
+    let minZ = +Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
     _iterateGeometries(root, mergeGeometry, (geo, transform) => {
       const components = geo.attributes.position.array;
       for (let i = 0; i < components.length; i += 3) {
         v.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
-		if ( v.x < minX ) minX = v.x;
-		if ( v.y < minY ) minY = v.y;
-		if ( v.z < minZ ) minZ = v.z;
-		if ( v.x > maxX ) maxX = v.x;
-		if ( v.y > maxY ) maxY = v.y;
-		if ( v.z > maxZ ) maxZ = v.z;
+        if (v.x < minX) minX = v.x;
+        if (v.y < minY) minY = v.y;
+        if (v.z < minZ) minZ = v.z;
+        if (v.x > maxX) maxX = v.x;
+        if (v.y > maxY) maxY = v.y;
+        if (v.z > maxZ) maxZ = v.z;
       }
     });
     target.min.set(minX, minY, minZ);
@@ -179,23 +182,23 @@ const _computeBounds = (function() {
   };
 })();
 
-const _createBoxShape = function({x, y, z} = halfExtents) {
+const _createBoxShape = function({ x, y, z } = halfExtents) {
   const btHalfExtents = new Ammo.btVector3(x, y, z);
   const collisionShape = new Ammo.btBoxShape(btHalfExtents);
   Ammo.destroy(btHalfExtents);
   return collisionShape;
 };
 
-const _createCylinderShape = function({x, y, z} = halfExtents, cylinderAxis) {
+const _createCylinderShape = function({ x, y, z } = halfExtents, cylinderAxis) {
   const btHalfExtents = new Ammo.btVector3(x, y, z);
   const collisionShape = (() => {
     switch (cylinderAxis) {
-    case "y":
-      return new Ammo.btCylinderShape(btHalfExtents);
-    case "x":
-      return new Ammo.btCylinderShapeX(btHalfExtents);
-    case "z":
-      return new Ammo.btCylinderShapeZ(btHalfExtents);
+      case "y":
+        return new Ammo.btCylinderShape(btHalfExtents);
+      case "x":
+        return new Ammo.btCylinderShapeX(btHalfExtents);
+      case "z":
+        return new Ammo.btCylinderShapeZ(btHalfExtents);
     }
     return null;
   })();
@@ -203,26 +206,26 @@ const _createCylinderShape = function({x, y, z} = halfExtents, cylinderAxis) {
   return collisionShape;
 };
 
-const _createConeShape = function({x, y, z} = halfExtents, cylinderAxis) {
+const _createConeShape = function({ x, y, z } = halfExtents, cylinderAxis) {
   switch (cylinderAxis) {
-  case "y":
-    return new Ammo.btConeShape(Math.max(x, z), y * 2);
-  case "x":
-    return new Ammo.btConeShapeX(Math.max(y, z), x * 2);
-  case "z":
-    return new Ammo.btConeShapeZ(Math.max(x, y), z * 2);
+    case "y":
+      return new Ammo.btConeShape(Math.max(x, z), y * 2);
+    case "x":
+      return new Ammo.btConeShapeX(Math.max(y, z), x * 2);
+    case "z":
+      return new Ammo.btConeShapeZ(Math.max(x, y), z * 2);
   }
   return null;
 };
 
-const _createCapsuleShape = function({x, y, z} = halfExtents, capsuleAxis) {
+const _createCapsuleShape = function({ x, y, z } = halfExtents, capsuleAxis) {
   switch (capsuleAxis) {
-  case "y":
-    return new Ammo.btCapsuleShape(Math.max(x, z), y * 2);
-  case "x":
-    return new Ammo.btCapsuleShapeX(Math.max(y, z), x * 2);
-  case "z":
-    return new Ammo.btCapsuleShapeZ(Math.max(x, y), z * 2);
+    case "y":
+      return new Ammo.btCapsuleShape(Math.max(x, z), y * 2);
+    case "x":
+      return new Ammo.btCapsuleShapeX(Math.max(y, z), x * 2);
+    case "z":
+      return new Ammo.btCapsuleShapeZ(Math.max(x, y), z * 2);
   }
   return null;
 };
@@ -238,7 +241,7 @@ const _createHullShape = (function() {
     originalHull.setMargin(margin);
 
     let vertexCount = 0;
-    _iterateGeometries(root, mergeGeometry, (geo) => {
+    _iterateGeometries(root, mergeGeometry, geo => {
       vertexCount += geo.attributes.position.array.length / 3;
     });
 
