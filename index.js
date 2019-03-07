@@ -95,11 +95,12 @@ exports.createCollisionShape = (function() {
   };
 })();
 
-function _iterateMeshes(sceneRoot, mergeGeometry, cb) {
+// Calls `cb(mesh)` for each mesh under `root` whose vertices we should take into account for the physics shape.
+function _iterateMeshes(root, mergeGeometry, cb) {
   if (!mergeGeometry) {
-    cb(sceneRoot);
+    cb(root);
   } else {
-    sceneRoot.traverse(obj => {
+    root.traverse(obj => {
       if (obj.isMesh && (!THREE.Sky || obj.__proto__ != THREE.Sky.prototype)) {
         cb(obj);
       }
@@ -107,30 +108,35 @@ function _iterateMeshes(sceneRoot, mergeGeometry, cb) {
   }
 }
 
+// Calls `cb(geo, xform)` for each geometry under `root` whose vertices we should take into account for the physics shape.
+// `xform` is the transform required to transform the given geometry's vertices into root-local space.
 const _iterateGeometries = (function() {
   const transform = new THREE.Matrix4();
   const inverse = new THREE.Matrix4();
   const bufferGeometry = new THREE.BufferGeometry();
-  return function(sceneRoot, mergeGeometry, cb) {
-    inverse.getInverse(sceneRoot.matrixWorld);
-    _iterateMeshes(sceneRoot, mergeGeometry, mesh => {
+  return function(root, mergeGeometry, cb) {
+    inverse.getInverse(root.matrixWorld);
+    _iterateMeshes(root, mergeGeometry, mesh => {
       const geo = mesh.geometry.isBufferGeometry ? mesh.geometry : bufferGeometry.fromGeometry(mesh.geometry);
-      if (mesh !== sceneRoot) {
+      if (mesh !== root) {
         transform.multiplyMatrices(inverse, mesh.matrixWorld);
       } else {
         transform.identity();
       }
+      // todo: might want to return null xform if this is the root so that callers can avoid multiplying
+      // things by the identity matrix
       cb(geo, transform);
     });
   };
 })();
 
+// Sets `target` to the bounding sphere for the geometries underneath `root`.
 const _computeSphere = (function() {
   const v = new THREE.Vector3();
-  return function(sceneRoot, mergeGeometry, bounds, target) {
+  return function(root, mergeGeometry, bounds, target) {
     let maxRadiusSq = 0;
     let { x: cx, y: cy, z: cz } = bounds.getCenter(target.center);
-    _iterateGeometries(sceneRoot, mergeGeometry, (geo, transform) => {
+    _iterateGeometries(root, mergeGeometry, (geo, transform) => {
       const components = geo.attributes.position.array;
       for (let i = 0; i < components.length; i += 3) {
         v.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
@@ -145,16 +151,17 @@ const _computeSphere = (function() {
   };
 })();
 
+// Sets `target` to the bounding box for the geometries underneath `root`.
 const _computeBounds = (function() {
   const v = new THREE.Vector3();
-  return function(sceneRoot, mergeGeometry, target) {
+  return function(root, mergeGeometry, target) {
     let minX = + Infinity;
     let minY = + Infinity;
     let minZ = + Infinity;
     let maxX = - Infinity;
     let maxY = - Infinity;
     let maxZ = - Infinity;
-    _iterateGeometries(sceneRoot, mergeGeometry, (geo, transform) => {
+    _iterateGeometries(root, mergeGeometry, (geo, transform) => {
       const components = geo.attributes.position.array;
       for (let i = 0; i < components.length; i += 3) {
         v.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
@@ -225,31 +232,30 @@ const _createHullShape = (function() {
   const quat = new THREE.Quaternion();
   const scale = new THREE.Vector3();
   const vertex = new THREE.Vector3();
-  return function(sceneRoot, mergeGeometry, margin, maxVertices) {
-    sceneRoot.matrixWorld.decompose(pos, quat, scale);
-    const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
+  return function(root, mergeGeometry, margin, maxVertices) {
     const btVertex = new Ammo.btVector3();
     const originalHull = new Ammo.btConvexHullShape();
     originalHull.setMargin(margin);
 
     let vertexCount = 0;
-    _iterateGeometries(sceneRoot, mergeGeometry, (geo) => {
+    _iterateGeometries(root, mergeGeometry, (geo) => {
       vertexCount += geo.attributes.position.array.length / 3;
     });
 
+    // todo: might want to implement this in a deterministic way that doesn't do O(verts) calls to Math.random
     console.log(`Creating hull shape with ${vertexCount} vertices.`);
     if (vertexCount > maxVertices) {
       console.warn(`too many vertices for hull shape; sampling ~${maxVertices} from ~${vertexCount} vertices`);
     }
     const p = Math.min(1, maxVertices / vertexCount);
 
-    _iterateGeometries(sceneRoot, mergeGeometry, (geo, transform) => {
+    _iterateGeometries(root, mergeGeometry, (geo, transform) => {
       const components = geo.attributes.position.array;
       for (let i = 0; i < components.length; i += 3) {
         if (Math.random() <= p) {
           vertex.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
           btVertex.setValue(vertex.x, vertex.y, vertex.z);
-          originalHull.addPoint(btVertex, i === components.length - 3);
+          originalHull.addPoint(btVertex, i === components.length - 3); // todo: better to recalc AABB only on last geometry
         }
       }
     });
@@ -266,7 +272,11 @@ const _createHullShape = (function() {
       );
       collisionShape.resources = [shapeHull];
     }
+
+    root.matrixWorld.decompose(pos, quat, scale);
+    const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
     collisionShape.setLocalScaling(localScale);
+
     Ammo.destroy(localScale);
     Ammo.destroy(btVertex);
     return collisionShape;
@@ -280,14 +290,14 @@ const _createTriMeshShape = (function() {
   const va = new THREE.Vector3();
   const vb = new THREE.Vector3();
   const vc = new THREE.Vector3();
-  return function(sceneRoot, mergeGeometry) {
-    //TODO: limit number of triangles?
+  return function(root, mergeGeometry) {
+    // todo: limit number of triangles?
     const bta = new Ammo.btVector3();
     const btb = new Ammo.btVector3();
     const btc = new Ammo.btVector3();
     const triMesh = new Ammo.btTriangleMesh(true, false);
 
-    _iterateGeometries(sceneRoot, mergeGeometry, (geo, transform) => {
+    _iterateGeometries(root, mergeGeometry, (geo, transform) => {
       const components = geo.attributes.position.array;
       if (geo.index) {
         for (let i = 0; i < geo.index.length; i += 3) {
@@ -315,11 +325,14 @@ const _createTriMeshShape = (function() {
       }
     });
 
-    sceneRoot.matrixWorld.decompose(pos, quat, scale);
+    // todo: it's very bad to setLocalScaling on the shape after initializing, causing a needless BVH recalc --
+    // we should be using triMesh.setScaling prior to building the BVH
+    root.matrixWorld.decompose(pos, quat, scale);
     const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
     const collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
     collisionShape.setLocalScaling(localScale);
     collisionShape.resources = [triMesh];
+
     Ammo.destroy(localScale);
     Ammo.destroy(bta);
     Ammo.destroy(btb);
