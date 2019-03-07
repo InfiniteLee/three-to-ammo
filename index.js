@@ -22,7 +22,6 @@ exports.createCollisionShape = (function() {
     const autoGenerateShape = options.hasOwnProperty("autoGenerateShape") ? options.autoGenerateShape : true;
     const mergeGeometry = options.hasOwnProperty("mergeGeometry") ? options.mergeGeometry : true;
     const type = options.type || Type.HULL;
-    const recenter = options.hasOwnProperty("recenter") ? options.recenter : false;
     if (options.halfExtents) {
       halfExtents.set(options.halfExtents.x, options.halfExtents.y, options.halfExtents.z);
     }
@@ -40,8 +39,8 @@ exports.createCollisionShape = (function() {
     let meshes;
     let vertices;
 
-    if ((mergeGeometry || autoGenerateShape || recenter) && !sceneRoot) {
-      console.warn("cannot use mergeGeometry, autoGenerateShape, or recenter if sceneRoot is null");
+    if ((mergeGeometry || autoGenerateShape) && !sceneRoot) {
+      console.warn("cannot use mergeGeometry or autoGenerateShape if sceneRoot is null");
       return;
     }
 
@@ -49,12 +48,6 @@ exports.createCollisionShape = (function() {
       meshes = _getMeshes(sceneRoot);
     } else {
       meshes = [sceneRoot];
-    }
-
-    if (type !== "mesh") {
-      if (recenter) {
-        _recenter(sceneRoot, meshes);
-      }
     }
 
     if (autoGenerateShape) {
@@ -311,32 +304,6 @@ const _getVertices = (function() {
     }
 
     return vertices;
-  };
-})();
-
-const _recenter = (function() {
-  const geometries = [];
-  const offset = new THREE.Matrix4();
-  const center = new THREE.Vector3();
-
-  return function(sceneRoot, meshes) {
-    if (meshes.length === 1) {
-      meshes[0].geometry.center();
-      return;
-    }
-
-    const { min, max } = _getBoundingBox(meshes);
-    center.addVectors(max, min).multiplyScalar(-0.5);
-    offset.makeTranslation(center.x, center.y, center.z);
-
-    for (let j = 0; j < meshes.length; j++) {
-      const mesh = meshes[j];
-      if (geometries.indexOf(mesh.geometry.uuid) !== -1) {
-        continue;
-      }
-      mesh.geometry.applyMatrix(offset);
-      geometries.push(mesh.geometry.uuid);
-    }
   };
 })();
 
