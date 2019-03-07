@@ -98,7 +98,7 @@ exports.createCollisionShape = (function() {
       break;
     }
     case Type.MESH: {
-      collisionShape = _createTriMeshShape(sceneRoot, _getVertices(sceneRoot, meshes));
+      collisionShape = _createTriMeshShape(sceneRoot, meshes);
       break;
     }
     default:
@@ -204,22 +204,47 @@ const _createTriMeshShape = (function() {
   const pos = new THREE.Vector3();
   const quat = new THREE.Quaternion();
   const scale = new THREE.Vector3();
-  return function(sceneRoot, vertices) {
-    sceneRoot.matrixWorld.decompose(pos, quat, scale);
-    const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
+  const matrix = new THREE.Matrix4();
+  const inverse = new THREE.Matrix4();
+  return function(sceneRoot, meshes) {
+    //TODO: limit number of triangles?
     const a = new Ammo.btVector3();
     const b = new Ammo.btVector3();
     const c = new Ammo.btVector3();
     const triMesh = new Ammo.btTriangleMesh(true, false);
 
-    for (let j = 0; j < vertices.length; j += 3) {
-      a.setValue(vertices[j].x, vertices[j].y, vertices[j].z);
-      b.setValue(vertices[j + 1].x, vertices[j + 1].y, vertices[j + 1].z);
-      c.setValue(vertices[j + 2].x, vertices[j + 2].y, vertices[j + 2].z);
-      triMesh.addTriangle(a, b, c, j == vertices.length - 3);
-      //TODO: limit number of triangles?
+    for (let mi = 0; mi < meshes.length; mi++) {
+      const mesh = meshes[mi];
+      const isLastMesh = mi === meshes.length - 1;
+      const geometry = getBufferGeometry(mesh.geometry);
+      const components = geometry.attributes.position.array;
+      if (mesh !== sceneRoot) {
+        matrix.multiplyMatrices(inverse, mesh.matrixWorld);
+      } else {
+        matrix.identity();
+      }
+      if (geometry.index) {
+        for (let i = 0; i < geometry.index.length; i += 3) {
+          const ai = geometry.index[i];
+          const bi = geometry.index[i + 1];
+          const ci = geometry.index[i + 2];
+          a.setValue(components[ai], components[ai + 1], components[ai + 2]);
+          b.setValue(components[bi], components[bi + 1], components[bi + 2]);
+          c.setValue(components[ci], components[ci + 1], components[ci + 2]);
+          triMesh.addTriangle(a, b, c, isLastMesh && i == geometry.index.length - 3);
+        }
+      } else {
+        for (let i = 0; i < components.length; i += 9) {
+          a.setValue(components[i + 0], components[i + 1], components[i + 2]);
+          b.setValue(components[i + 3], components[i + 4], components[i + 5]);
+          c.setValue(components[i + 6], components[i + 7], components[i + 8]);
+          triMesh.addTriangle(a, b, c, isLastMesh && i == components.length - 9);
+        }
+      }
     }
 
+    sceneRoot.matrixWorld.decompose(pos, quat, scale);
+    const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
     const collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
     collisionShape.setLocalScaling(localScale);
     collisionShape.resources = [triMesh];
@@ -245,6 +270,7 @@ const computeSphere = (function() {
 
     let { x: cx, y: cy, z: cz } = bounds.getCenter(target.center);
     let maxRadiusSq = 0;
+    inverse.getInverse(sceneRoot.matrixWorld);
 
     for (let mesh of meshes) {
       const geometry = getBufferGeometry(mesh.geometry);
@@ -279,7 +305,6 @@ const computeBounds = (function() {
     let maxX = - Infinity;
     let maxY = - Infinity;
     let maxZ = - Infinity;
-
     inverse.getInverse(sceneRoot.matrixWorld);
 
     for (let mesh of meshes) {
