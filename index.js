@@ -12,323 +12,333 @@ const Type = (exports.Type = {
 });
 
 exports.createCollisionShape = (function() {
+  const bounds = new THREE.Box3();
+  const sphere = new THREE.Sphere();
   const halfExtents = new THREE.Vector3();
-  const pos = new THREE.Vector3();
-  const quat = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
-  const box = new THREE.Box3();
 
   return function(sceneRoot, options) {
     const autoGenerateShape = options.hasOwnProperty("autoGenerateShape") ? options.autoGenerateShape : true;
     const mergeGeometry = options.hasOwnProperty("mergeGeometry") ? options.mergeGeometry : true;
     const type = options.type || Type.HULL;
-    if (options.halfExtents) {
-      halfExtents.set(options.halfExtents.x, options.halfExtents.y, options.halfExtents.z);
-    }
     const minHalfExtent = options.hasOwnProperty("minHalfExtent") ? options.minHalfExtent : 0;
     const maxHalfExtent = options.hasOwnProperty("maxHalfExtent") ? options.maxHalfExtent : Number.POSITIVE_INFINITY;
     const cylinderAxis = options.cylinderAxis || "y";
-    const sphereRadius = options.sphereRadius || NaN;
     const margin = options.hasOwnProperty("margin") ? options.margin : 0.01;
-    const hullMaxVertices = options.hullMaxVertices || 100000;
-
-    let collisionShape;
-    let triMesh;
-    let shapeHull;
-
-    let meshes;
-    let vertices;
 
     if ((mergeGeometry || autoGenerateShape) && !sceneRoot) {
       console.warn("cannot use mergeGeometry or autoGenerateShape if sceneRoot is null");
-      return;
+      return null;
     }
 
-    if (mergeGeometry) {
-      meshes = _getMeshes(sceneRoot);
-    } else {
-      meshes = [sceneRoot];
-    }
+    const computeRadius = function() {
+      _computeBounds(sceneRoot, mergeGeometry, bounds);
+      _computeSphere(sceneRoot, mergeGeometry, bounds, sphere);
+      return sphere.radius;
+    };
 
-    if (autoGenerateShape) {
-      vertices = _getVertices(sceneRoot, meshes);
-
-      if ([Type.SPHERE, Type.HULL, Type.MESH].indexOf(type) === -1) {
-        box.setFromPoints(vertices);
-        const { max, min } = box;
-        halfExtents
-          .subVectors(max, min)
-          .multiplyScalar(0.5)
-          .clampScalar(minHalfExtent, maxHalfExtent);
-      }
-    }
-    const { x, y, z } = halfExtents;
+    const computeHalfExtents = function() {
+      _computeBounds(sceneRoot, mergeGeometry, bounds);
+      return halfExtents
+        .subVectors(bounds.max, bounds.min)
+        .multiplyScalar(0.5)
+        .clampScalar(minHalfExtent, maxHalfExtent);
+    };
 
     //TODO: Support convex hull decomposition, compound shapes, gimpact (dynamic trimesh)
+    let collisionShape;
     switch (type) {
       case Type.BOX: {
-        const halfExtents = new Ammo.btVector3(x, y, z);
-        collisionShape = new Ammo.btBoxShape(halfExtents);
-        Ammo.destroy(halfExtents);
-        break;
-      }
-      case Type.SPHERE: {
-        let radius = 1;
-        if (sphereRadius) {
-          radius = sphereRadius;
-        } else {
-          const sphere = new THREE.Sphere();
-          sphere.setFromPoints(vertices);
-          if (isFinite(sphere.radius)) {
-            radius = sphere.radius;
-          }
-        }
-        collisionShape = new Ammo.btSphereShape(radius);
+        const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
+        collisionShape = _createBoxShape(hx);
         break;
       }
       case Type.CYLINDER: {
-        const halfExtents = new Ammo.btVector3(x, y, z);
-        switch (cylinderAxis) {
-          case "y":
-            collisionShape = new Ammo.btCylinderShape(halfExtents);
-            break;
-          case "x":
-            collisionShape = new Ammo.btCylinderShapeX(halfExtents);
-            break;
-          case "z":
-            collisionShape = new Ammo.btCylinderShapeZ(halfExtents);
-            break;
-        }
-        Ammo.destroy(halfExtents);
+        const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
+        collisionShape = _createCylinderShape(hx, cylinderAxis);
         break;
       }
       case Type.CAPSULE: {
-        switch (cylinderAxis) {
-          case "y":
-            collisionShape = new Ammo.btCapsuleShape(Math.max(x, z), y * 2);
-            break;
-          case "x":
-            collisionShape = new Ammo.btCapsuleShapeX(Math.max(y, z), x * 2);
-            break;
-          case "z":
-            collisionShape = new Ammo.btCapsuleShapeZ(Math.max(x, y), z * 2);
-            break;
-        }
+        const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
+        collisionShape = _createCapsuleShape(hx, cylinderAxis);
         break;
       }
       case Type.CONE: {
-        switch (cylinderAxis) {
-          case "y":
-            collisionShape = new Ammo.btConeShape(Math.max(x, z), y * 2);
-            break;
-          case "x":
-            collisionShape = new Ammo.btConeShapeX(Math.max(y, z), x * 2);
-            break;
-          case "z":
-            collisionShape = new Ammo.btConeShapeZ(Math.max(x, y), z * 2);
-            break;
-        }
+        const hx = autoGenerateShape ? computeHalfExtents() : options.halfExtents;
+        collisionShape = _createConeShape(hx, cylinderAxis);
+        break;
+      }
+      case Type.SPHERE: {
+        const radius = !isNaN(options.sphereRadius) ? options.sphereRadius : computeRadius();
+        collisionShape = new Ammo.btSphereShape(radius);
         break;
       }
       case Type.HULL: {
-        sceneRoot.matrixWorld.decompose(pos, quat, scale);
-        const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
-        const vec3 = new Ammo.btVector3();
-        const originalHull = new Ammo.btConvexHullShape();
-        originalHull.setMargin(margin);
-        if (vertices.length > hullMaxVertices) {
-          console.warn(
-            "too many vertices for hull shape; randomly sampling " +
-              hullMaxVertices +
-              " from " +
-              vertices.length +
-              " vertices"
-          );
-          vertices = getRandomSample(vertices, hullMaxVertices);
-        }
-        for (let i = 0; i < vertices.length; i++) {
-          vec3.setValue(vertices[i].x, vertices[i].y, vertices[i].z);
-          originalHull.addPoint(vec3, i == vertices.length - 1);
-        }
-
-        collisionShape = originalHull;
-        if (originalHull.getNumVertices() >= 100) {
-          //Bullet documentation says don't use convexHulls with 100 verts or more
-          shapeHull = new Ammo.btShapeHull(originalHull);
-          shapeHull.buildHull(margin);
-          Ammo.destroy(originalHull);
-          collisionShape = new Ammo.btConvexHullShape(
-            Ammo.getPointer(shapeHull.getVertexPointer()),
-            shapeHull.numVertices()
-          );
-        }
-        collisionShape.setLocalScaling(localScale);
-
-        Ammo.destroy(localScale);
-        Ammo.destroy(vec3);
+        collisionShape = _createHullShape(sceneRoot, mergeGeometry, margin, options.hullMaxVertices || 100000);
         break;
       }
       case Type.MESH: {
-        sceneRoot.matrixWorld.decompose(pos, quat, scale);
-        const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
-        const a = new Ammo.btVector3();
-        const b = new Ammo.btVector3();
-        const c = new Ammo.btVector3();
-        triMesh = new Ammo.btTriangleMesh(true, false);
-
-        for (let j = 0; j < vertices.length; j += 3) {
-          a.setValue(vertices[j].x, vertices[j].y, vertices[j].z);
-          b.setValue(vertices[j + 1].x, vertices[j + 1].y, vertices[j + 1].z);
-          c.setValue(vertices[j + 2].x, vertices[j + 2].y, vertices[j + 2].z);
-          triMesh.addTriangle(a, b, c, j == vertices.length - 3);
-          //TODO: limit number of triangles?
-        }
-
-        collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
-        collisionShape.setLocalScaling(localScale);
-
-        Ammo.destroy(localScale);
-        Ammo.destroy(a);
-        Ammo.destroy(b);
-        Ammo.destroy(c);
+        collisionShape = _createTriMeshShape(sceneRoot, mergeGeometry);
         break;
       }
-
       default:
-        console.warn(shape + " is not currently supported");
-        return;
+        console.warn(type + " is not currently supported");
+        return null;
     }
 
-    collisionShape.setMargin(margin);
-
-    collisionShape.destroy = () => {
-      if (shapeHull) Ammo.destroy(shapeHull);
-      if (triMesh) Ammo.destroy(triMesh);
-      if (collisionShape) Ammo.destroy(collisionShape);
-    };
-
     collisionShape.type = type;
+    collisionShape.setMargin(margin);
+    collisionShape.destroy = () => {
+      for (let res of collisionShape.resources || []) {
+        Ammo.destroy(res);
+      }
+      Ammo.destroy(collisionShape);
+    };
 
     return collisionShape;
   };
 })();
 
-//https://stackoverflow.com/a/37835673
-const getRandomSample = (function() {
-  const swaps = [];
-  return function(array, size) {
-    let r,
-      i = array.length,
-      end = i - size,
-      temp;
-
-    while (i-- > end) {
-      r = Math.floor(Math.random() * (i + 1));
-      temp = array[r];
-      array[r] = array[i];
-      array[i] = temp;
-      swaps.push(i);
-      swaps.push(r);
-    }
-
-    const sample = array.slice(end);
-
-    while (size--) {
-      i = swaps.pop();
-      r = swaps.pop();
-      temp = array[i];
-      array[i] = array[r];
-      array[r] = temp;
-    }
-
-    return sample;
-  };
-})();
-
-function _getMeshes(sceneRoot) {
-  let meshes = [];
-  sceneRoot.traverse(o => {
-    if (o.isMesh && (!THREE.Sky || o.__proto__ != THREE.Sky.prototype)) {
-      meshes.push(o);
-    }
-  });
-  return meshes;
+// Calls `cb(mesh)` for each mesh under `root` whose vertices we should take into account for the physics shape.
+function _iterateMeshes(root, mergeGeometry, cb) {
+  if (!mergeGeometry) {
+    cb(root);
+  } else {
+    root.traverse(obj => {
+      if (obj.isMesh && (!THREE.Sky || obj.__proto__ != THREE.Sky.prototype)) {
+        cb(obj);
+      }
+    });
+  }
 }
 
-const _getVertices = (function() {
-  const vertexPool = [];
-  const vertices = [];
-  const matrix = new THREE.Matrix4();
+// Calls `cb(geo, xform)` for each geometry under `root` whose vertices we should take into account for the physics shape.
+// `xform` is the transform required to transform the given geometry's vertices into root-local space.
+const _iterateGeometries = (function() {
+  const transform = new THREE.Matrix4();
   const inverse = new THREE.Matrix4();
-
-  return function(sceneRoot, meshes) {
-    while (vertices.length > 0) {
-      vertexPool.push(vertices.pop());
-    }
-
-    inverse.getInverse(sceneRoot.matrixWorld);
-
-    for (let j = 0; j < meshes.length; j++) {
-      const mesh = meshes[j];
-
-      const geometry = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
-
-      if (mesh !== sceneRoot) {
-        matrix.multiplyMatrices(inverse, mesh.matrixWorld);
-        geometry.applyMatrix(matrix);
-      }
-
-      if (geometry.isBufferGeometry) {
-        const components = geometry.attributes.position.array;
-        for (let i = 0; i < components.length; i += 3) {
-          const x = components[i];
-          const y = components[i + 1];
-          const z = components[i + 2];
-
-          if (vertexPool.length > 0) {
-            vertices.push(vertexPool.pop().set(x, y, z));
-          } else {
-            vertices.push(new THREE.Vector3(x, y, z));
-          }
-        }
+  const bufferGeometry = new THREE.BufferGeometry();
+  return function(root, mergeGeometry, cb) {
+    inverse.getInverse(root.matrixWorld);
+    _iterateMeshes(root, mergeGeometry, mesh => {
+      const geo = mesh.geometry.isBufferGeometry ? mesh.geometry : bufferGeometry.fromGeometry(mesh.geometry);
+      if (mesh !== root) {
+        transform.multiplyMatrices(inverse, mesh.matrixWorld);
       } else {
-        for (let i = 0; i < geometry.vertices.length; i++) {
-          const vertex = geometry.vertices[i];
-          if (vertexPool.length > 0) {
-            vertices.push(vertexPool.pop().copy(vertex));
-          } else {
-            vertices.push(new THREE.Vector3(vertex.x, vertex.y, vertex.z));
-          }
-        }
+        transform.identity();
       }
-    }
-
-    return vertices;
+      // todo: might want to return null xform if this is the root so that callers can avoid multiplying
+      // things by the identity matrix
+      cb(geo, transform);
+    });
   };
 })();
 
-const _getBoundingBox = (function() {
-  const boundingBox = {
-    min: new THREE.Vector3(Number.MAX_VALUE),
-    max: new THREE.Vector3(Number.MIN_VALUE)
-  };
-
-  return function(meshes) {
-    for (let i = 0; i < meshes.length; ++i) {
-      const mesh = meshes[i];
-      if (!mesh.geometry.boundingBox) {
-        mesh.geometry.computeBoundingBox();
+// Sets `target` to the bounding sphere for the geometries underneath `root`.
+const _computeSphere = (function() {
+  const v = new THREE.Vector3();
+  return function(root, mergeGeometry, bounds, target) {
+    let maxRadiusSq = 0;
+    let { x: cx, y: cy, z: cz } = bounds.getCenter(target.center);
+    _iterateGeometries(root, mergeGeometry, (geo, transform) => {
+      const components = geo.attributes.position.array;
+      for (let i = 0; i < components.length; i += 3) {
+        v.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
+        const dx = cx - v.x;
+        const dy = cy - v.y;
+        const dz = cz - v.z;
+        maxRadiusSq = Math.max(maxRadiusSq, dx * dx + dy * dy + dz * dz);
       }
-      const box = mesh.geometry.boundingBox;
+    });
+    target.radius = Math.sqrt(maxRadiusSq);
+    return target;
+  };
+})();
 
-      boundingBox.min.x = Math.min(box.min.x, box.min.x);
-      boundingBox.min.y = Math.min(box.min.y, box.min.y);
-      boundingBox.min.z = Math.min(box.min.z, box.min.z);
+// Sets `target` to the bounding box for the geometries underneath `root`.
+const _computeBounds = (function() {
+  const v = new THREE.Vector3();
+  return function(root, mergeGeometry, target) {
+    let minX = +Infinity;
+    let minY = +Infinity;
+    let minZ = +Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    _iterateGeometries(root, mergeGeometry, (geo, transform) => {
+      const components = geo.attributes.position.array;
+      for (let i = 0; i < components.length; i += 3) {
+        v.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
+        if (v.x < minX) minX = v.x;
+        if (v.y < minY) minY = v.y;
+        if (v.z < minZ) minZ = v.z;
+        if (v.x > maxX) maxX = v.x;
+        if (v.y > maxY) maxY = v.y;
+        if (v.z > maxZ) maxZ = v.z;
+      }
+    });
+    target.min.set(minX, minY, minZ);
+    target.max.set(maxX, maxY, maxZ);
+    return target;
+  };
+})();
 
-      boundingBox.max.x = Math.max(box.max.x, box.max.x);
-      boundingBox.max.y = Math.max(box.max.y, box.max.y);
-      boundingBox.max.z = Math.max(box.max.z, box.max.z);
+const _createBoxShape = function({ x, y, z } = halfExtents) {
+  const btHalfExtents = new Ammo.btVector3(x, y, z);
+  const collisionShape = new Ammo.btBoxShape(btHalfExtents);
+  Ammo.destroy(btHalfExtents);
+  return collisionShape;
+};
+
+const _createCylinderShape = function({ x, y, z } = halfExtents, cylinderAxis) {
+  const btHalfExtents = new Ammo.btVector3(x, y, z);
+  const collisionShape = (() => {
+    switch (cylinderAxis) {
+      case "y":
+        return new Ammo.btCylinderShape(btHalfExtents);
+      case "x":
+        return new Ammo.btCylinderShapeX(btHalfExtents);
+      case "z":
+        return new Ammo.btCylinderShapeZ(btHalfExtents);
     }
-    return boundingBox;
+    return null;
+  })();
+  Ammo.destroy(btHalfExtents);
+  return collisionShape;
+};
+
+const _createConeShape = function({ x, y, z } = halfExtents, cylinderAxis) {
+  switch (cylinderAxis) {
+    case "y":
+      return new Ammo.btConeShape(Math.max(x, z), y * 2);
+    case "x":
+      return new Ammo.btConeShapeX(Math.max(y, z), x * 2);
+    case "z":
+      return new Ammo.btConeShapeZ(Math.max(x, y), z * 2);
+  }
+  return null;
+};
+
+const _createCapsuleShape = function({ x, y, z } = halfExtents, capsuleAxis) {
+  switch (capsuleAxis) {
+    case "y":
+      return new Ammo.btCapsuleShape(Math.max(x, z), y * 2);
+    case "x":
+      return new Ammo.btCapsuleShapeX(Math.max(y, z), x * 2);
+    case "z":
+      return new Ammo.btCapsuleShapeZ(Math.max(x, y), z * 2);
+  }
+  return null;
+};
+
+const _createHullShape = (function() {
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  const vertex = new THREE.Vector3();
+  return function(root, mergeGeometry, margin, maxVertices) {
+    const btVertex = new Ammo.btVector3();
+    const originalHull = new Ammo.btConvexHullShape();
+    originalHull.setMargin(margin);
+
+    let vertexCount = 0;
+    _iterateGeometries(root, mergeGeometry, geo => {
+      vertexCount += geo.attributes.position.array.length / 3;
+    });
+
+    // todo: might want to implement this in a deterministic way that doesn't do O(verts) calls to Math.random
+    if (vertexCount > maxVertices) {
+      console.warn(`too many vertices for hull shape; sampling ~${maxVertices} from ~${vertexCount} vertices`);
+    }
+    const p = Math.min(1, maxVertices / vertexCount);
+
+    _iterateGeometries(root, mergeGeometry, (geo, transform) => {
+      const components = geo.attributes.position.array;
+      for (let i = 0; i < components.length; i += 3) {
+        if (Math.random() <= p) {
+          vertex.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
+          btVertex.setValue(vertex.x, vertex.y, vertex.z);
+          originalHull.addPoint(btVertex, i === components.length - 3); // todo: better to recalc AABB only on last geometry
+        }
+      }
+    });
+
+    let collisionShape = originalHull;
+    if (originalHull.getNumVertices() >= 100) {
+      //Bullet documentation says don't use convexHulls with 100 verts or more
+      const shapeHull = new Ammo.btShapeHull(originalHull);
+      shapeHull.buildHull(margin);
+      Ammo.destroy(originalHull);
+      collisionShape = new Ammo.btConvexHullShape(
+        Ammo.getPointer(shapeHull.getVertexPointer()),
+        shapeHull.numVertices()
+      );
+      collisionShape.resources = [shapeHull];
+    }
+
+    root.matrixWorld.decompose(pos, quat, scale);
+    const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
+    collisionShape.setLocalScaling(localScale);
+
+    Ammo.destroy(localScale);
+    Ammo.destroy(btVertex);
+    return collisionShape;
+  };
+})();
+
+const _createTriMeshShape = (function() {
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  const va = new THREE.Vector3();
+  const vb = new THREE.Vector3();
+  const vc = new THREE.Vector3();
+  return function(root, mergeGeometry) {
+    // todo: limit number of triangles?
+    const bta = new Ammo.btVector3();
+    const btb = new Ammo.btVector3();
+    const btc = new Ammo.btVector3();
+    const triMesh = new Ammo.btTriangleMesh(true, false);
+
+    _iterateGeometries(root, mergeGeometry, (geo, transform) => {
+      const components = geo.attributes.position.array;
+      if (geo.index) {
+        for (let i = 0; i < geo.index.length; i += 3) {
+          const ai = geo.index[i];
+          const bi = geo.index[i + 1];
+          const ci = geo.index[i + 2];
+          va.set(components[ai], components[ai + 1], components[ai + 2]).applyMatrix4(transform);
+          vb.set(components[bi], components[bi + 1], components[bi + 2]).applyMatrix4(transform);
+          vc.set(components[ci], components[ci + 1], components[ci + 2]).applyMatrix4(transform);
+          bta.setValue(va.x, va.y, va.z);
+          btb.setValue(vb.x, vb.y, vb.z);
+          btc.setValue(vc.x, vc.y, vc.z);
+          triMesh.addTriangle(bta, btb, btc, false);
+        }
+      } else {
+        for (let i = 0; i < components.length; i += 9) {
+          va.set(components[i + 0], components[i + 1], components[i + 2]).applyMatrix4(transform);
+          vb.set(components[i + 3], components[i + 4], components[i + 5]).applyMatrix4(transform);
+          vc.set(components[i + 6], components[i + 7], components[i + 8]).applyMatrix4(transform);
+          bta.setValue(va.x, va.y, va.z);
+          btb.setValue(vb.x, vb.y, vb.z);
+          btc.setValue(vc.x, vc.y, vc.z);
+          triMesh.addTriangle(bta, btb, btc, false);
+        }
+      }
+    });
+
+    // todo: it's very bad to setLocalScaling on the shape after initializing, causing a needless BVH recalc --
+    // we should be using triMesh.setScaling prior to building the BVH
+    root.matrixWorld.decompose(pos, quat, scale);
+    const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
+    const collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
+    collisionShape.setLocalScaling(localScale);
+    collisionShape.resources = [triMesh];
+
+    Ammo.destroy(localScale);
+    Ammo.destroy(bta);
+    Ammo.destroy(btb);
+    Ammo.destroy(btc);
+    return collisionShape;
   };
 })();
