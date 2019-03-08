@@ -237,8 +237,6 @@ const _createHullShape = (function() {
   const vertex = new THREE.Vector3();
   return function(root, mergeGeometry, margin, maxVertices) {
     const btVertex = new Ammo.btVector3();
-    const originalHull = new Ammo.btConvexHullShape();
-    originalHull.setMargin(margin);
 
     let vertexCount = 0;
     _iterateGeometries(root, mergeGeometry, geo => {
@@ -250,17 +248,26 @@ const _createHullShape = (function() {
       console.warn(`too many vertices for hull shape; sampling ~${maxVertices} from ~${vertexCount} vertices`);
     }
     const p = Math.min(1, maxVertices / vertexCount);
+    let vi = 0;
+    let jsVerts = new Float32Array(vertexCount);
 
     _iterateGeometries(root, mergeGeometry, (geo, transform) => {
       const components = geo.attributes.position.array;
       for (let i = 0; i < components.length; i += 3) {
         if (Math.random() <= p) {
           vertex.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
-          btVertex.setValue(vertex.x, vertex.y, vertex.z);
-          originalHull.addPoint(btVertex, i === components.length - 3); // todo: better to recalc AABB only on last geometry
+          jsVerts[(vi * 3) + 0] = vertex.x;
+          jsVerts[(vi * 3) + 1] = vertex.y;
+          jsVerts[(vi * 3) + 2] = vertex.z;
+          vi++;
         }
       }
     });
+
+    const btVertsPtr = Ammo._malloc(vi * 3 * 4);
+    Ammo.HEAPF32.set(jsVerts, btVertsPtr / 4);
+    const originalHull = new Ammo.btConvexHullShape(btVertsPtr, vi, 12);
+    originalHull.setMargin(margin);
 
     let collisionShape = originalHull;
     if (originalHull.getNumVertices() >= 100) {
