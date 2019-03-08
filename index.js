@@ -299,7 +299,7 @@ const _createTriMeshShape = (function() {
     const bta = new Ammo.btVector3();
     const btb = new Ammo.btVector3();
     const btc = new Ammo.btVector3();
-    const triMesh = new Ammo.btTriangleMesh(true, true);
+    const triMesh = new Ammo.btTriangleMesh(false, true);
     triMesh.setScaling(localScale);
 
     _iterateGeometries(root, mergeGeometry, (geo, transform) => {
