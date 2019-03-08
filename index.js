@@ -294,10 +294,13 @@ const _createTriMeshShape = (function() {
   const vc = new THREE.Vector3();
   return function(root, mergeGeometry) {
     // todo: limit number of triangles?
+    root.matrixWorld.decompose(pos, quat, scale);
+    const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
     const bta = new Ammo.btVector3();
     const btb = new Ammo.btVector3();
     const btc = new Ammo.btVector3();
     const triMesh = new Ammo.btTriangleMesh(true, false);
+    triMesh.setScaling(localScale);
 
     _iterateGeometries(root, mergeGeometry, (geo, transform) => {
       const components = geo.attributes.position.array;
@@ -327,12 +330,7 @@ const _createTriMeshShape = (function() {
       }
     });
 
-    // todo: it's very bad to setLocalScaling on the shape after initializing, causing a needless BVH recalc --
-    // we should be using triMesh.setScaling prior to building the BVH
-    root.matrixWorld.decompose(pos, quat, scale);
-    const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
     const collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
-    collisionShape.setLocalScaling(localScale);
     collisionShape.resources = [triMesh];
 
     Ammo.destroy(localScale);
