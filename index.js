@@ -19,6 +19,7 @@ const FIT = (exports.FIT = {
 
 exports.createCollisionShapes = (function() {
   const bounds = new THREE.Box3();
+  const shapeBounds = [];
   const localOffset = new THREE.Vector3();
   const q = new THREE.Quaternion();
   const sphere = new THREE.Sphere();
@@ -155,6 +156,8 @@ exports.createCollisionShapes = (function() {
       Ammo.destroy(rotation);
 
       const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
+      // todo: it's very bad to setLocalScaling on a btBvhTriangleMeshShape after initializing, causing a needless BVH recalc --
+      // we should be using triMesh.setScaling prior to building the BVH
       collisionShape.setLocalScaling(localScale);
       Ammo.destroy(localScale);
 
@@ -166,12 +169,36 @@ exports.createCollisionShapes = (function() {
     const shapes = [];
     matrix.identity();
     if (fit === FIT.COMPOUND) {
+      shapeBounds.length = 0;
       inverse.getInverse(sceneRoot.matrixWorld);
       sceneRoot.traverse(obj => {
         if (obj.isMesh && (!THREE.Sky || obj.__proto__ != THREE.Sky.prototype)) {
           matrix.multiplyMatrices(inverse, obj.matrixWorld);
           matrix.decompose(pos, quat, scale);
-          shapes.push(createCollisionShape(obj));
+          const shape = createCollisionShape(obj);
+
+          let addShape = true;
+          if (type !== TYPE.SPHERE && type !== TYPE.MESH) {
+            for (let i = 0; i < shapeBounds.length; i++) {
+              //Loop through all collisionShapes that have already been added to the scene and determine if this one is already enclosed by one of those.
+              //If so, don't add it.
+              //TODO: get rid of this if HACD is ever implemented.
+              if (_boxEnclosesBox(shapeBounds[i], bounds)) {
+                addShape = false;
+                break;
+              }
+            }
+
+            if (addShape) {
+              shapeBounds.push(bounds.clone());
+            }
+          }
+
+          if (addShape) {
+            shapes.push(shape);
+          } else {
+            shape.destroy();
+          }
         }
       });
     } else {
@@ -385,7 +412,7 @@ const _createTriMeshShape = (function() {
     _iterateGeometries(root, fit, (geo, transform) => {
       const components = geo.attributes.position.array;
       if (geo.index) {
-        for (let i = 0; i < geo.index.array.length; i += 3) {
+        for (let i = 0; i < geo.index.count; i += 3) {
           const ai = geo.index.array[i] * 3;
           const bi = geo.index.array[i + 1] * 3;
           const ci = geo.index.array[i + 2] * 3;
@@ -410,8 +437,6 @@ const _createTriMeshShape = (function() {
       }
     });
 
-    // todo: it's very bad to setLocalScaling on the shape after initializing, causing a needless BVH recalc --
-    // we should be using triMesh.setScaling prior to building the BVH
     const collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
     collisionShape.resources = [triMesh];
 
@@ -421,3 +446,14 @@ const _createTriMeshShape = (function() {
     return collisionShape;
   };
 })();
+
+const _boxEnclosesBox = function(source, target) {
+  return (
+    source.min.x <= target.min.x &&
+    source.max.x > target.max.x &&
+    source.min.y <= target.min.y &&
+    source.max.y > target.max.y &&
+    source.min.z <= target.min.z &&
+    source.max.z > target.max.z
+  );
+};
