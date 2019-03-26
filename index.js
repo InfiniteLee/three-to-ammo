@@ -19,7 +19,6 @@ const FIT = (exports.FIT = {
 
 exports.createCollisionShapes = (function() {
   const bounds = new THREE.Box3();
-  const shapeBounds = [];
   const localOffset = new THREE.Vector3();
   const q = new THREE.Quaternion();
   const sphere = new THREE.Sphere();
@@ -169,36 +168,12 @@ exports.createCollisionShapes = (function() {
     const shapes = [];
     matrix.identity();
     if (fit === FIT.COMPOUND) {
-      shapeBounds.length = 0;
       inverse.getInverse(sceneRoot.matrixWorld);
       sceneRoot.traverse(obj => {
         if (obj.isMesh && (!THREE.Sky || obj.__proto__ != THREE.Sky.prototype)) {
           matrix.multiplyMatrices(inverse, obj.matrixWorld);
           matrix.decompose(pos, quat, scale);
-          const shape = createCollisionShape(obj);
-
-          let addShape = true;
-          if (type !== TYPE.SPHERE && type !== TYPE.MESH) {
-            for (let i = 0; i < shapeBounds.length; i++) {
-              //Loop through all collisionShapes that have already been added to the scene and determine if this one is already enclosed by one of those.
-              //If so, don't add it.
-              //TODO: get rid of this if HACD is ever implemented.
-              if (_boxEnclosesBox(shapeBounds[i], bounds)) {
-                addShape = false;
-                break;
-              }
-            }
-
-            if (addShape) {
-              shapeBounds.push(bounds.clone());
-            }
-          }
-
-          if (addShape) {
-            shapes.push(shape);
-          } else {
-            shape.destroy();
-          }
+          shapes.push(createCollisionShape(obj));
         }
       });
     } else {
@@ -446,14 +421,3 @@ const _createTriMeshShape = (function() {
     return collisionShape;
   };
 })();
-
-const _boxEnclosesBox = function(source, target) {
-  return (
-    source.min.x <= target.min.x &&
-    source.max.x > target.max.x &&
-    source.min.y <= target.min.y &&
-    source.max.y > target.max.y &&
-    source.min.z <= target.min.z &&
-    source.max.z > target.max.z
-  );
-};
