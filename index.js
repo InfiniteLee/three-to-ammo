@@ -365,7 +365,7 @@ const _createHullShape = (function() {
         Ammo.getPointer(shapeHull.getVertexPointer()),
         shapeHull.numVertices()
       );
-      collisionShape.resources = [shapeHull];
+      Ammo.destroy(shapeHull); // btConvexHullShape makes a copy
     }
 
     Ammo.destroy(btVertex);
