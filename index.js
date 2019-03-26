@@ -8,6 +8,7 @@ const Type = (exports.Type = {
   CAPSULE: "capsule",
   CONE: "cone",
   HULL: "hull",
+  DECOMP: "decomp",
   MESH: "mesh"
 });
 
@@ -78,6 +79,10 @@ exports.createCollisionShape = (function() {
       }
       case Type.MESH: {
         collisionShape = _createTriMeshShape(sceneRoot, mergeGeometry);
+        break;
+      }
+      case Type.DECOMP: {
+        collisionShape = _createDecomposedHullShape(sceneRoot, mergeGeometry, margin);
         break;
       }
       default:
@@ -282,6 +287,88 @@ const _createHullShape = (function() {
     Ammo.destroy(localScale);
     Ammo.destroy(btVertex);
     return collisionShape;
+  };
+})();
+
+const _createDecomposedHullShape = (function() {
+  const v = new THREE.Vector3();
+  return function(root, mergeGeometry) {
+
+    let vertexCount = 0;
+    let triCount = 0;
+    _iterateGeometries(root, mergeGeometry, geo => {
+      vertexCount += geo.attributes.position.array.length / 3;
+      if (geo.index) {
+        triCount += geo.index.array.length / 3;
+      } else {
+        triCount += geo.attributes.position.array.length / 9;
+      }
+    });
+
+    const hacd = new Ammo.HACD();
+    hacd.SetCompacityWeight(0.1);
+    hacd.SetVolumeWeight(0.0);
+    hacd.SetNClusters(2);
+    hacd.SetNVerticesPerCH(100);
+    hacd.SetConcavity(100);
+
+    const points = Ammo._malloc(vertexCount * 3 * 8);
+    const triangles = Ammo._malloc(triCount * 3 * 4);
+    hacd.SetPoints(points);
+    hacd.SetTriangles(triangles);
+    hacd.SetNPoints(vertexCount);
+    hacd.SetNTriangles(triCount);
+
+    const pptr = points / 8, tptr = triangles / 4;
+    _iterateGeometries(root, mergeGeometry, (geo, transform) => {
+      const components = geo.attributes.position.array;
+      const indices = geo.index ? geo.index.array : null;
+      for (let i = 0; i < components.length; i += 3) {
+        v.set(components[i + 0], components[i + 1], components[i + 2]).applyMatrix4(transform);
+        Ammo.HEAPF64[pptr + i + 0] = v.x;
+        Ammo.HEAPF64[pptr + i + 1] = v.y;
+        Ammo.HEAPF64[pptr + i + 2] = v.z;
+      }
+      if (indices) {
+        for (let i = 0; i < indices.length; i++) {
+          Ammo.HEAP32[tptr + i] = indices[i];
+        }
+      } else {
+        for (let i = 0; i < components.length / 3; i++) {
+          Ammo.HEAP32[tptr + i] = i;
+        }
+      }
+    });
+
+    hacd.Compute();
+    const nClusters = hacd.GetNClusters();
+
+    const compoundShape = new Ammo.btCompoundShape(true);
+    for (let i = 0; i < nClusters; i++) {
+      const hull = new Ammo.btConvexHullShape();
+      const nPoints = hacd.GetNPointsCH(i);
+      const nTriangles = hacd.GetNTrianglesCH(i);
+      const hullPoints = Ammo._malloc(nPoints * 3 * 8);
+      const hullTriangles = Ammo._malloc(nTriangles * 3 * 4);
+      hacd.GetCH(i, hullPoints, hullTriangles);
+
+      const pptr = hullPoints / 8;
+      for (let pi = 0; pi < nPoints; pi++) {
+        const btVertex = new Ammo.btVector3();
+        const px = Ammo.HEAPF64[pptr + (pi * 3) + 0];
+        const py = Ammo.HEAPF64[pptr + (pi * 3) + 1];
+        const pz = Ammo.HEAPF64[pptr + (pi * 3) + 2];
+        btVertex.setValue(px, py, pz);
+        hull.addPoint(btVertex, pi === nPoints - 1);
+        Ammo.destroy(btVertex);
+      }
+
+      const localTransform = new Ammo.btTransform();
+      localTransform.setIdentity();
+      compoundShape.addChildShape(localTransform, hull);
+    }
+
+    return compoundShape;
   };
 })();
 
