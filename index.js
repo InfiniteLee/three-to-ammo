@@ -112,11 +112,19 @@ exports.createCollisionShapes = (function() {
           break;
         }
         case TYPE.HULL: {
-          const hx = fit === FIT.MANUAL ? options.halfExtents : computeHalfExtents(root);
+          if (fit === FIT.MANUAL) {
+            fit = FIT.ALL;
+            console.warn("cannot use fit: manual with type: hull, switching to fit: all");
+          }
+          const hx = computeHalfExtents(root);
           collisionShape = _createHullShape(root, fit, margin, bounds, options.hullMaxVertices || 100000);
           break;
         }
         case TYPE.MESH: {
+          if (fit === FIT.MANUAL) {
+            fit = FIT.ALL;
+            console.warn("cannot use fit: manual with type: mesh, switching to fit: all");
+          }
           collisionShape = _createTriMeshShape(root, fit);
           localOffset.add(pos);
           break;
