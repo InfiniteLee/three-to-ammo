@@ -35,7 +35,7 @@ exports.createCollisionShapes = (function() {
 
   return function(sceneRoot, options) {
     const fit = options.hasOwnProperty("fit") ? options.fit : FIT.ALL;
-    const type = options.type || TYPE.HULL;
+    let type = options.type || TYPE.HULL;
     const minHalfExtent = options.hasOwnProperty("minHalfExtent") ? options.minHalfExtent : 0;
     const maxHalfExtent = options.hasOwnProperty("maxHalfExtent") ? options.maxHalfExtent : Number.POSITIVE_INFINITY;
     const cylinderAxis = options.cylinderAxis || "y";
