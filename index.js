@@ -21,9 +21,7 @@ exports.createCollisionShapes = (function() {
   const bounds = new THREE.Box3();
   const localOffset = new THREE.Vector3();
   const q = new THREE.Quaternion();
-  const sphere = new THREE.Sphere();
   const halfExtents = new THREE.Vector3();
-
   const offset = new THREE.Vector3();
   const orientation = new THREE.Quaternion();
 
@@ -53,62 +51,60 @@ exports.createCollisionShapes = (function() {
       orientation.set(0, 0, 0, 1);
     }
 
+    if (options.halfExtents && fit === FIT.MANUAL) {
+      halfExtents.copy(options.halfExtents);
+    }
+
     if (fit !== FIT.MANUAL && !sceneRoot) {
       console.warn("cannot use all or compound fit if sceneRoot is null");
       return null;
     }
 
-    const computeRadius = function(root) {
-      _computeBounds(root, fit, bounds);
-      _computeSphere(root, fit, bounds, sphere);
-      return sphere.radius;
-    };
-
-    const computeHalfExtents = function(root) {
-      _computeBounds(root, fit, bounds);
-      halfExtents
-        .subVectors(bounds.max, bounds.min)
-        .multiplyScalar(0.5)
-        .clampScalar(minHalfExtent, maxHalfExtent);
-      localOffset
-        .addVectors(bounds.max, bounds.min)
-        .multiplyScalar(0.5)
-        .applyMatrix4(matrix);
-      return halfExtents;
-    };
-
-    const createCollisionShape = function(root) {
-      bounds.min.set(0, 0, 0);
-      bounds.max.set(0, 0, 0);
-      localOffset.set(0, 0, 0);
-
+    const createCollisionShape = function(root, matrix) {
+      matrix.decompose(pos, quat, scale);
       let collisionShape;
       switch (type) {
         case TYPE.BOX: {
-          const hx = fit === FIT.MANUAL ? options.halfExtents : computeHalfExtents(root);
-          collisionShape = _createBoxShape(hx);
+          if (fit !== FIT.MANUAL) {
+            _computeBounds(root, fit, bounds);
+            _computeHalfExtents(root, bounds, minHalfExtent, maxHalfExtent, halfExtents);
+          }
+          collisionShape = _createBoxShape(halfExtents);
           break;
         }
         case TYPE.CYLINDER: {
-          const hx = fit === FIT.MANUAL ? options.halfExtents : computeHalfExtents(root);
-          collisionShape = _createCylinderShape(hx, cylinderAxis);
+          if (fit !== FIT.MANUAL) {
+            _computeBounds(root, fit, bounds);
+            _computeHalfExtents(root, bounds, minHalfExtent, maxHalfExtent, halfExtents);
+          }
+          collisionShape = _createCylinderShape(halfExtents, cylinderAxis);
           break;
         }
         case TYPE.CAPSULE: {
-          const hx = fit === FIT.MANUAL ? options.halfExtents : computeHalfExtents(root);
-          collisionShape = _createCapsuleShape(hx, cylinderAxis);
+          if (fit !== FIT.MANUAL) {
+            _computeBounds(root, fit, bounds);
+            _computeHalfExtents(root, bounds, minHalfExtent, maxHalfExtent, halfExtents);
+          }
+          collisionShape = _createCapsuleShape(halfExtents, cylinderAxis);
           break;
         }
         case TYPE.CONE: {
-          const hx = fit === FIT.MANUAL ? options.halfExtents : computeHalfExtents(root);
-          collisionShape = _createConeShape(hx, cylinderAxis);
+          if (fit !== FIT.MANUAL) {
+            _computeBounds(root, fit, bounds);
+            _computeHalfExtents(root, bounds, minHalfExtent, maxHalfExtent, halfExtents);
+          }
+          collisionShape = _createConeShape(halfExtents, cylinderAxis);
           break;
         }
         case TYPE.SPHERE: {
-          const radius =
-            fit === FIT.MANUAL && !isNaN(options.sphereRadius) ? options.sphereRadius : computeRadius(root);
+          let radius;
+          if (fit === FIT.MANUAL && !isNaN(options.sphereRadius)) {
+            radius = options.sphereRadius;
+          } else {
+            _computeBounds(root, fit, bounds);
+            radius = _computeRadius(root, fit, bounds);
+          }
           collisionShape = new Ammo.btSphereShape(radius);
-          collisionShape.sphereRadius = radius;
           break;
         }
         case TYPE.HULL: {
@@ -116,7 +112,7 @@ exports.createCollisionShapes = (function() {
             fit = FIT.ALL;
             console.warn("cannot use fit: manual with type: hull, switching to fit: all");
           }
-          const hx = computeHalfExtents(root);
+          _computeBounds(root, fit, bounds);
           collisionShape = _createHullShape(root, fit, margin, bounds, options.hullMaxVertices || 100000);
           break;
         }
@@ -125,8 +121,7 @@ exports.createCollisionShapes = (function() {
             fit = FIT.ALL;
             console.warn("cannot use fit: manual with type: mesh, switching to fit: all");
           }
-          collisionShape = _createTriMeshShape(root, fit);
-          localOffset.add(pos);
+          collisionShape = _createTriMeshShape(root, fit, scale);
           break;
         }
         default:
@@ -149,6 +144,11 @@ exports.createCollisionShapes = (function() {
       localTransform.setIdentity();
 
       if (fit === FIT.COMPOUND) {
+        if (type === TYPE.MESH) {
+          localOffset.copy(pos);
+        } else {
+          _computeLocalOffset(matrix, bounds, localOffset);
+        }
         localOffset.add(offset);
         quat.multiply(orientation);
       } else {
@@ -162,11 +162,12 @@ exports.createCollisionShapes = (function() {
       localTransform.setRotation(rotation);
       Ammo.destroy(rotation);
 
-      const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
-      // todo: it's very bad to setLocalScaling on a btBvhTriangleMeshShape after initializing, causing a needless BVH recalc --
-      // we should be using triMesh.setScaling prior to building the BVH
-      collisionShape.setLocalScaling(localScale);
-      Ammo.destroy(localScale);
+      //scaling for meshes is handled in _createTriMeshShape
+      if (type !== TYPE.MESH) {
+        const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
+        collisionShape.setLocalScaling(localScale);
+        Ammo.destroy(localScale);
+      }
 
       collisionShape.localTransform = localTransform;
 
@@ -180,64 +181,63 @@ exports.createCollisionShapes = (function() {
       sceneRoot.traverse(obj => {
         if (obj.isMesh && (!THREE.Sky || obj.__proto__ != THREE.Sky.prototype)) {
           matrix.multiplyMatrices(inverse, obj.matrixWorld);
-          matrix.decompose(pos, quat, scale);
-          shapes.push(createCollisionShape(obj));
+          const shape = createCollisionShape(obj, matrix);
+          if (shape) shapes.push(shape);
         }
       });
-    } else {
-      if (fit === FIT.ALL) {
-        sceneRoot.matrixWorld.decompose(pos, quat, scale);
-      } else {
-        matrix.decompose(pos, quat, scale);
-      }
-      shapes.push(createCollisionShape(sceneRoot));
+    } else if (fit === FIT.ALL) {
+      shapes.push(createCollisionShape(sceneRoot, sceneRoot.matrixWorld));
+    } else if (fit === FIT.MANUAL) {
+      shapes.push(createCollisionShape(sceneRoot, matrix));
     }
-
     return shapes;
   };
 })();
 
 // Calls `cb(mesh)` for each mesh under `root` whose vertices we should take into account for the physics shape.
-function _iterateMeshes(root, fit, cb) {
-  if (fit !== FIT.ALL) {
-    cb(root);
-  } else {
-    root.traverse(obj => {
-      if (obj.isMesh && (!THREE.Sky || obj.__proto__ != THREE.Sky.prototype)) {
-        cb(obj);
-      }
-    });
-  }
+function _iterateMeshes(root, cb) {
+  root.traverse(obj => {
+    if (obj.isMesh && (!THREE.Sky || obj.__proto__ != THREE.Sky.prototype)) {
+      cb(obj);
+    }
+  });
 }
 
-// Calls `cb(geo, xform)` for each geometry under `root` whose vertices we should take into account for the physics shape.
-// `xform` is the transform required to transform the given geometry's vertices into root-local space.
+// Calls `cb(geo, transform)` for each geometry under `root` whose vertices we should take into account for the physics shape.
+// `transform` is the transform required to transform the given geometry's vertices into root-local space.
 const _iterateGeometries = (function() {
   const transform = new THREE.Matrix4();
   const inverse = new THREE.Matrix4();
   const bufferGeometry = new THREE.BufferGeometry();
   return function(root, fit, cb) {
     inverse.getInverse(root.matrixWorld);
-    _iterateMeshes(root, fit, mesh => {
-      const geo = mesh.geometry.isBufferGeometry ? mesh.geometry : bufferGeometry.fromGeometry(mesh.geometry);
-      if (mesh !== root) {
-        transform.multiplyMatrices(inverse, mesh.matrixWorld);
-      } else {
-        transform.identity();
-      }
-      // todo: might want to return null xform if this is the root so that callers can avoid multiplying
-      // things by the identity matrix
-      cb(geo, transform);
-    });
+
+    if (fit === FIT.ALL) {
+      _iterateMeshes(root, mesh => {
+        if (mesh !== root) {
+          transform.multiplyMatrices(inverse, mesh.matrixWorld);
+        } else {
+          transform.identity();
+        }
+        // todo: might want to return null xform if this is the root so that callers can avoid multiplying
+        // things by the identity matrix
+        cb(mesh.geometry.isBufferGeometry ? mesh.geometry : bufferGeometry.fromGeometry(mesh.geometry), transform);
+      });
+    } else {
+      cb(
+        root.geometry.isBufferGeometry ? root.geometry : bufferGeometry.fromGeometry(root.geometry),
+        transform.identity()
+      );
+    }
   };
 })();
 
-// Sets `target` to the bounding sphere for the geometries underneath `root`.
-const _computeSphere = (function() {
+const _computeRadius = (function() {
   const v = new THREE.Vector3();
-  return function(root, fit, bounds, target) {
+  const center = new THREE.Vector3();
+  return function(root, fit, bounds) {
     let maxRadiusSq = 0;
-    let { x: cx, y: cy, z: cz } = bounds.getCenter(target.center);
+    let { x: cx, y: cy, z: cz } = bounds.getCenter(center);
     _iterateGeometries(root, fit, (geo, transform) => {
       const components = geo.attributes.position.array;
       for (let i = 0; i < components.length; i += 3) {
@@ -248,10 +248,25 @@ const _computeSphere = (function() {
         maxRadiusSq = Math.max(maxRadiusSq, dx * dx + dy * dy + dz * dz);
       }
     });
-    target.radius = Math.sqrt(maxRadiusSq);
-    return target;
+    return Math.sqrt(maxRadiusSq);
   };
 })();
+
+const _computeHalfExtents = function(root, bounds, minHalfExtent, maxHalfExtent, target) {
+  target
+    .subVectors(bounds.max, bounds.min)
+    .multiplyScalar(0.5)
+    .clampScalar(minHalfExtent, maxHalfExtent);
+  return target;
+};
+
+const _computeLocalOffset = function(matrix, bounds, target) {
+  target
+    .addVectors(bounds.max, bounds.min)
+    .multiplyScalar(0.5)
+    .applyMatrix4(matrix);
+  return target;
+};
 
 // Sets `target` to the bounding box for the geometries underneath `root`.
 const _computeBounds = (function() {
@@ -263,6 +278,8 @@ const _computeBounds = (function() {
     let maxX = -Infinity;
     let maxY = -Infinity;
     let maxZ = -Infinity;
+    target.min.set(0, 0, 0);
+    target.max.set(0, 0, 0);
     _iterateGeometries(root, fit, (geo, transform) => {
       const components = geo.attributes.position.array;
       for (let i = 0; i < components.length; i += 3) {
@@ -385,8 +402,7 @@ const _createTriMeshShape = (function() {
   const va = new THREE.Vector3();
   const vb = new THREE.Vector3();
   const vc = new THREE.Vector3();
-  return function(root, fit) {
-    // todo: limit number of triangles?
+  return function(root, fit, scale) {
     const bta = new Ammo.btVector3();
     const btb = new Ammo.btVector3();
     const btc = new Ammo.btVector3();
@@ -419,6 +435,10 @@ const _createTriMeshShape = (function() {
         }
       }
     });
+
+    const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
+    triMesh.setScaling(localScale);
+    Ammo.destroy(localScale);
 
     const collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
     collisionShape.resources = [triMesh];
