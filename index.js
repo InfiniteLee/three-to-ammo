@@ -17,6 +17,8 @@ const FIT = (exports.FIT = {
   MANUAL: "manual" //A single shape is sized manually. Requires halfExtents or sphereRadius.
 });
 
+const hasUpdateMatricesFunction = THREE.Object3D.prototype.hasOwnProperty("updateMatrices");
+
 exports.createCollisionShapes = (function() {
   const bounds = new THREE.Box3();
   const localOffset = new THREE.Vector3();
@@ -33,7 +35,7 @@ exports.createCollisionShapes = (function() {
 
   return function(sceneRoot, options) {
     const fit = options.hasOwnProperty("fit") ? options.fit : FIT.ALL;
-    let type = options.type || TYPE.HULL;
+    const type = options.type || TYPE.HULL;
     const minHalfExtent = options.hasOwnProperty("minHalfExtent") ? options.minHalfExtent : 0;
     const maxHalfExtent = options.hasOwnProperty("maxHalfExtent") ? options.maxHalfExtent : Number.POSITIVE_INFINITY;
     const cylinderAxis = options.cylinderAxis || "y";
@@ -109,8 +111,8 @@ exports.createCollisionShapes = (function() {
         }
         case TYPE.HULL: {
           if (fit === FIT.MANUAL) {
-            fit = FIT.ALL;
-            console.warn("cannot use fit: manual with type: hull, switching to fit: all");
+            console.warn("cannot use fit: manual with type: hull");
+            return null;
           }
           _computeBounds(root, fit, bounds);
           collisionShape = _createHullShape(root, fit, margin, bounds, options.hullMaxVertices || 100000);
@@ -118,8 +120,8 @@ exports.createCollisionShapes = (function() {
         }
         case TYPE.MESH: {
           if (fit === FIT.MANUAL) {
-            fit = FIT.ALL;
-            console.warn("cannot use fit: manual with type: mesh, switching to fit: all");
+            console.warn("cannot use fit: manual with type: mesh");
+            return null;
           }
           collisionShape = _createTriMeshShape(root, fit, scale);
           break;
@@ -176,11 +178,19 @@ exports.createCollisionShapes = (function() {
 
     const shapes = [];
     matrix.identity();
+
+    if (hasUpdateMatricesFunction && sceneRoot) {
+      sceneRoot.updateMatrices();
+    }
+
     if (fit === FIT.COMPOUND) {
+      if (hasUpdateMatricesFunction) sceneRoot.updateMatrices();
       inverse.getInverse(sceneRoot.matrixWorld);
       sceneRoot.traverse(obj => {
         if (obj.isMesh && (!THREE.Sky || obj.__proto__ != THREE.Sky.prototype)) {
+          if (hasUpdateMatricesFunction) obj.updateMatrices();
           matrix.multiplyMatrices(inverse, obj.matrixWorld);
+
           const shape = createCollisionShape(obj, matrix);
           if (shape) shapes.push(shape);
         }
@@ -188,7 +198,7 @@ exports.createCollisionShapes = (function() {
     } else if (fit === FIT.ALL) {
       shapes.push(createCollisionShape(sceneRoot, sceneRoot.matrixWorld));
     } else if (fit === FIT.MANUAL) {
-      shapes.push(createCollisionShape(sceneRoot, matrix));
+      shapes.push(createCollisionShape(null, matrix));
     }
     return shapes;
   };
@@ -215,6 +225,7 @@ const _iterateGeometries = (function() {
     if (fit === FIT.ALL) {
       _iterateMeshes(root, mesh => {
         if (mesh !== root) {
+          if (hasUpdateMatricesFunction) mesh.updateMatrices();
           transform.multiplyMatrices(inverse, mesh.matrixWorld);
         } else {
           transform.identity();
