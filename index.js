@@ -8,318 +8,73 @@ const TYPE = (exports.TYPE = {
   CAPSULE: "capsule",
   CONE: "cone",
   HULL: "hull",
+  HACD: "hacd", //Hierarchical Approximate Convex Decomposition
+  VHACD: "vhacd", //Volumetric Hierarchical Approximate Convex Decomposition
   MESH: "mesh"
 });
 
 const FIT = (exports.FIT = {
   ALL: "all", //A single shape is automatically sized to bound all meshes within the entity.
-  COMPOUND: "compound", //Multiple shapes are generated to bound each individual mesh within the entity.
   MANUAL: "manual" //A single shape is sized manually. Requires halfExtents or sphereRadius.
 });
 
 const hasUpdateMatricesFunction = THREE.Object3D.prototype.hasOwnProperty("updateMatrices");
 
-exports.createCollisionShapes = (function() {
-  const bounds = new THREE.Box3();
-  const localOffset = new THREE.Vector3();
-  const q = new THREE.Quaternion();
-  const halfExtents = new THREE.Vector3();
-  const offset = new THREE.Vector3();
-  const orientation = new THREE.Quaternion();
-
-  const matrix = new THREE.Matrix4();
-  const inverse = new THREE.Matrix4();
-  const pos = new THREE.Vector3();
-  const quat = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
-
-  return function(sceneRoot, options) {
-    const fit = options.hasOwnProperty("fit") ? options.fit : FIT.ALL;
-    const type = options.type || TYPE.HULL;
-    const minHalfExtent = options.hasOwnProperty("minHalfExtent") ? options.minHalfExtent : 0;
-    const maxHalfExtent = options.hasOwnProperty("maxHalfExtent") ? options.maxHalfExtent : Number.POSITIVE_INFINITY;
-    const cylinderAxis = options.cylinderAxis || "y";
-    const margin = options.hasOwnProperty("margin") ? options.margin : 0.01;
-
-    if (options.offset) {
-      offset.set(options.offset.x, options.offset.y, options.offset.z);
-    } else {
-      offset.set(0, 0, 0);
-    }
-
-    if (options.orientation) {
-      orientation.set(options.orientation.x, options.orientation.y, options.orientation.z, options.orientation.w);
-    } else {
-      orientation.set(0, 0, 0, 1);
-    }
-
-    if (options.halfExtents && fit === FIT.MANUAL) {
-      halfExtents.copy(options.halfExtents);
-    }
-
-    if (fit !== FIT.MANUAL && !sceneRoot) {
-      console.warn("cannot use all or compound fit if sceneRoot is null");
-      return null;
-    }
-
-    const createCollisionShape = function(root, matrix) {
-      matrix.decompose(pos, quat, scale);
-      let collisionShape;
-      switch (type) {
-        case TYPE.BOX: {
-          if (fit !== FIT.MANUAL) {
-            _computeBounds(root, fit, bounds);
-            _computeHalfExtents(root, bounds, minHalfExtent, maxHalfExtent, halfExtents);
-          }
-          collisionShape = _createBoxShape(halfExtents);
-          break;
-        }
-        case TYPE.CYLINDER: {
-          if (fit !== FIT.MANUAL) {
-            _computeBounds(root, fit, bounds);
-            _computeHalfExtents(root, bounds, minHalfExtent, maxHalfExtent, halfExtents);
-          }
-          collisionShape = _createCylinderShape(halfExtents, cylinderAxis);
-          break;
-        }
-        case TYPE.CAPSULE: {
-          if (fit !== FIT.MANUAL) {
-            _computeBounds(root, fit, bounds);
-            _computeHalfExtents(root, bounds, minHalfExtent, maxHalfExtent, halfExtents);
-          }
-          collisionShape = _createCapsuleShape(halfExtents, cylinderAxis);
-          break;
-        }
-        case TYPE.CONE: {
-          if (fit !== FIT.MANUAL) {
-            _computeBounds(root, fit, bounds);
-            _computeHalfExtents(root, bounds, minHalfExtent, maxHalfExtent, halfExtents);
-          }
-          collisionShape = _createConeShape(halfExtents, cylinderAxis);
-          break;
-        }
-        case TYPE.SPHERE: {
-          let radius;
-          if (fit === FIT.MANUAL && !isNaN(options.sphereRadius)) {
-            radius = options.sphereRadius;
-          } else {
-            _computeBounds(root, fit, bounds);
-            radius = _computeRadius(root, fit, bounds);
-          }
-          collisionShape = new Ammo.btSphereShape(radius);
-          break;
-        }
-        case TYPE.HULL: {
-          if (fit === FIT.MANUAL) {
-            console.warn("cannot use fit: manual with type: hull");
-            return null;
-          }
-          _computeBounds(root, fit, bounds);
-          collisionShape = _createHullShape(root, fit, margin, bounds, options.hullMaxVertices || 100000);
-          break;
-        }
-        case TYPE.MESH: {
-          if (fit === FIT.MANUAL) {
-            console.warn("cannot use fit: manual with type: mesh");
-            return null;
-          }
-          collisionShape = _createTriMeshShape(root, fit, scale);
-          break;
-        }
-        default:
-          console.warn(type + " is not currently supported");
-          return null;
-      }
-      //TODO: Support convex hull decomposition, compound shapes, gimpact (dynamic trimesh)
-
-      collisionShape.type = type;
-      collisionShape.setMargin(margin);
-      collisionShape.destroy = () => {
-        for (let res of collisionShape.resources || []) {
-          Ammo.destroy(res);
-        }
-        Ammo.destroy(collisionShape);
-      };
-
-      const localTransform = new Ammo.btTransform();
-      const rotation = new Ammo.btQuaternion();
-      localTransform.setIdentity();
-
-      if (fit === FIT.COMPOUND) {
-        if (type === TYPE.MESH) {
-          localOffset.copy(pos);
-        } else {
-          _computeLocalOffset(matrix, bounds, localOffset);
-        }
-        localOffset.add(offset);
-        quat.multiply(orientation);
-      } else {
-        localOffset.copy(offset);
-        quat.copy(orientation);
-      }
-
-      localTransform.getOrigin().setValue(localOffset.x, localOffset.y, localOffset.z);
-      rotation.setValue(quat.x, quat.y, quat.z, quat.w);
-
-      localTransform.setRotation(rotation);
-      Ammo.destroy(rotation);
-
-      //scaling for meshes is handled in _createTriMeshShape
-      if (type !== TYPE.MESH) {
-        const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
-        collisionShape.setLocalScaling(localScale);
-        Ammo.destroy(localScale);
-      }
-
-      collisionShape.localTransform = localTransform;
-
-      return collisionShape;
-    };
-
-    const shapes = [];
-    matrix.identity();
-
-    if (hasUpdateMatricesFunction && sceneRoot) {
-      sceneRoot.updateMatrices();
-    }
-
-    if (fit === FIT.COMPOUND) {
-      if (hasUpdateMatricesFunction) sceneRoot.updateMatrices();
-      inverse.getInverse(sceneRoot.matrixWorld);
-      sceneRoot.traverse(obj => {
-        if (obj.isMesh && (!THREE.Sky || obj.__proto__ != THREE.Sky.prototype)) {
-          if (hasUpdateMatricesFunction) obj.updateMatrices();
-          matrix.multiplyMatrices(inverse, obj.matrixWorld);
-
-          const shape = createCollisionShape(obj, matrix);
-          if (shape) shapes.push(shape);
-        }
-      });
-    } else if (fit === FIT.ALL) {
-      shapes.push(createCollisionShape(sceneRoot, sceneRoot.matrixWorld));
-    } else if (fit === FIT.MANUAL) {
-      shapes.push(createCollisionShape(null, matrix));
-    }
-    return shapes;
-  };
-})();
-
-// Calls `cb(mesh)` for each mesh under `root` whose vertices we should take into account for the physics shape.
-function _iterateMeshes(root, cb) {
-  root.traverse(obj => {
-    if (obj.isMesh && (!THREE.Sky || obj.__proto__ != THREE.Sky.prototype)) {
-      cb(obj);
-    }
-  });
-}
-
-// Calls `cb(geo, transform)` for each geometry under `root` whose vertices we should take into account for the physics shape.
-// `transform` is the transform required to transform the given geometry's vertices into root-local space.
-const _iterateGeometries = (function() {
-  const transform = new THREE.Matrix4();
-  const inverse = new THREE.Matrix4();
-  const bufferGeometry = new THREE.BufferGeometry();
-  return function(root, fit, cb) {
-    inverse.getInverse(root.matrixWorld);
-
-    if (fit === FIT.ALL) {
-      _iterateMeshes(root, mesh => {
-        if (mesh !== root) {
-          if (hasUpdateMatricesFunction) mesh.updateMatrices();
-          transform.multiplyMatrices(inverse, mesh.matrixWorld);
-        } else {
-          transform.identity();
-        }
-        // todo: might want to return null xform if this is the root so that callers can avoid multiplying
-        // things by the identity matrix
-        cb(mesh.geometry.isBufferGeometry ? mesh.geometry : bufferGeometry.fromGeometry(mesh.geometry), transform);
-      });
-    } else {
-      cb(
-        root.geometry.isBufferGeometry ? root.geometry : bufferGeometry.fromGeometry(root.geometry),
-        transform.identity()
-      );
-    }
-  };
-})();
-
-const _computeRadius = (function() {
-  const v = new THREE.Vector3();
-  const center = new THREE.Vector3();
-  return function(root, fit, bounds) {
-    let maxRadiusSq = 0;
-    let { x: cx, y: cy, z: cz } = bounds.getCenter(center);
-    _iterateGeometries(root, fit, (geo, transform) => {
-      const components = geo.attributes.position.array;
-      for (let i = 0; i < components.length; i += 3) {
-        v.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
-        const dx = cx - v.x;
-        const dy = cy - v.y;
-        const dz = cz - v.z;
-        maxRadiusSq = Math.max(maxRadiusSq, dx * dx + dy * dy + dz * dz);
-      }
-    });
-    return Math.sqrt(maxRadiusSq);
-  };
-})();
-
-const _computeHalfExtents = function(root, bounds, minHalfExtent, maxHalfExtent, target) {
-  target
-    .subVectors(bounds.max, bounds.min)
-    .multiplyScalar(0.5)
-    .clampScalar(minHalfExtent, maxHalfExtent);
-  return target;
+exports.createCollisionShapes = function(root, options) {
+  switch (options.type) {
+    case TYPE.BOX:
+      return [this.createBoxShape(root, options)];
+    case TYPE.CYLINDER:
+      return [this.createCylinderShape(root, options)];
+    case TYPE.CAPSULE:
+      return [this.createCapsuleShape(root, options)];
+    case TYPE.CONE:
+      return [this.createConeShape(root, options)];
+    case TYPE.SPHERE:
+      return [this.createSphereShape(root, options)];
+    case TYPE.HULL:
+      return [this.createHullShape(root, options)];
+    case TYPE.HACD:
+      return this.createHACDShapes(root, options);
+    case TYPE.VHACD:
+      return this.createVHACDShapes(root, options);
+    case TYPE.MESH:
+      return [this.createTriMeshShape(root, options)];
+    default:
+      console.warn(options.type + " is not currently supported");
+      return [];
+  }
 };
 
-const _computeLocalOffset = function(matrix, bounds, target) {
-  target
-    .addVectors(bounds.max, bounds.min)
-    .multiplyScalar(0.5)
-    .applyMatrix4(matrix);
-  return target;
-};
+//TODO: support gimpact (dynamic trimesh) and heightmap
 
-// Sets `target` to the bounding box for the geometries underneath `root`.
-const _computeBounds = (function() {
-  const v = new THREE.Vector3();
-  return function(root, fit, target) {
-    let minX = +Infinity;
-    let minY = +Infinity;
-    let minZ = +Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    let maxZ = -Infinity;
-    target.min.set(0, 0, 0);
-    target.max.set(0, 0, 0);
-    _iterateGeometries(root, fit, (geo, transform) => {
-      const components = geo.attributes.position.array;
-      for (let i = 0; i < components.length; i += 3) {
-        v.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
-        if (v.x < minX) minX = v.x;
-        if (v.y < minY) minY = v.y;
-        if (v.z < minZ) minZ = v.z;
-        if (v.x > maxX) maxX = v.x;
-        if (v.y > maxY) maxY = v.y;
-        if (v.z > maxZ) maxZ = v.z;
-      }
-    });
-    target.min.set(minX, minY, minZ);
-    target.max.set(maxX, maxY, maxZ);
-    return target;
-  };
-})();
+exports.createBoxShape = function(root, options) {
+  options.type = TYPE.BOX;
+  _setOptions(options);
 
-const _createBoxShape = function({ x, y, z } = halfExtents) {
-  const btHalfExtents = new Ammo.btVector3(x, y, z);
+  if (options.fit === FIT.ALL) {
+    options.halfExtents = _computeHalfExtents(root, _computeBounds(root), options.minHalfExtent, options.maxHalfExtent);
+  }
+
+  const btHalfExtents = new Ammo.btVector3(options.halfExtents.x, options.halfExtents.y, options.halfExtents.z);
   const collisionShape = new Ammo.btBoxShape(btHalfExtents);
   Ammo.destroy(btHalfExtents);
+
+  _finishCollisionShape(collisionShape, options, _computeScale(root, options));
   return collisionShape;
 };
 
-const _createCylinderShape = function({ x, y, z } = halfExtents, cylinderAxis) {
-  const btHalfExtents = new Ammo.btVector3(x, y, z);
+exports.createCylinderShape = function(root, options) {
+  options.type = TYPE.CYLINDER;
+  _setOptions(options);
+
+  if (options.fit === FIT.ALL) {
+    options.halfExtents = _computeHalfExtents(root, _computeBounds(root), options.minHalfExtent, options.maxHalfExtent);
+  }
+
+  const btHalfExtents = new Ammo.btVector3(options.halfExtents.x, options.halfExtents.y, options.halfExtents.z);
   const collisionShape = (() => {
-    switch (cylinderAxis) {
+    switch (options.cylinderAxis) {
       case "y":
         return new Ammo.btCylinderShape(btHalfExtents);
       case "x":
@@ -330,54 +85,108 @@ const _createCylinderShape = function({ x, y, z } = halfExtents, cylinderAxis) {
     return null;
   })();
   Ammo.destroy(btHalfExtents);
+
+  _finishCollisionShape(collisionShape, options, _computeScale(root, options));
   return collisionShape;
 };
 
-const _createConeShape = function({ x, y, z } = halfExtents, cylinderAxis) {
-  switch (cylinderAxis) {
-    case "y":
-      return new Ammo.btConeShape(Math.max(x, z), y * 2);
-    case "x":
-      return new Ammo.btConeShapeX(Math.max(y, z), x * 2);
-    case "z":
-      return new Ammo.btConeShapeZ(Math.max(x, y), z * 2);
+exports.createCapsuleShape = function(root, options) {
+  options.type = TYPE.CAPSULE;
+  _setOptions(options);
+
+  if (options.fit === FIT.ALL) {
+    options.halfExtents = _computeHalfExtents(root, _computeBounds(root), options.minHalfExtent, options.maxHalfExtent);
   }
-  return null;
+
+  const { x, y, z } = options.halfExtents;
+  const collisionShape = (() => {
+    switch (options.cylinderAxis) {
+      case "y":
+        return new Ammo.btCapsuleShape(Math.max(x, z), y * 2);
+      case "x":
+        return new Ammo.btCapsuleShapeX(Math.max(y, z), x * 2);
+      case "z":
+        return new Ammo.btCapsuleShapeZ(Math.max(x, y), z * 2);
+    }
+    return null;
+  })();
+
+  _finishCollisionShape(collisionShape, options, _computeScale(root, options));
+  return collisionShape;
 };
 
-const _createCapsuleShape = function({ x, y, z } = halfExtents, capsuleAxis) {
-  switch (capsuleAxis) {
-    case "y":
-      return new Ammo.btCapsuleShape(Math.max(x, z), y * 2);
-    case "x":
-      return new Ammo.btCapsuleShapeX(Math.max(y, z), x * 2);
-    case "z":
-      return new Ammo.btCapsuleShapeZ(Math.max(x, y), z * 2);
+exports.createConeShape = function(root, options) {
+  options.type = TYPE.CONE;
+  _setOptions(options);
+
+  if (options.fit === FIT.ALL) {
+    options.halfExtents = _computeHalfExtents(root, _computeBounds(root), options.minHalfExtent, options.maxHalfExtent);
   }
-  return null;
+
+  const { x, y, z } = options.halfExtents;
+  const collisionShape = (() => {
+    switch (options.cylinderAxis) {
+      case "y":
+        return new Ammo.btConeShape(Math.max(x, z), y * 2);
+      case "x":
+        return new Ammo.btConeShapeX(Math.max(y, z), x * 2);
+      case "z":
+        return new Ammo.btConeShapeZ(Math.max(x, y), z * 2);
+    }
+    return null;
+  })();
+
+  _finishCollisionShape(collisionShape, options, _computeScale(root, options));
+  return collisionShape;
 };
 
-const _createHullShape = (function() {
+exports.createSphereShape = function(root, options) {
+  options.type = TYPE.SPHERE;
+  let radius;
+  if (options.fit === FIT.MANUAL && !isNaN(options.sphereRadius)) {
+    radius = options.sphereRadius;
+  } else {
+    radius = _computeRadius(root, _computeBounds(root));
+  }
+
+  const collisionShape = new Ammo.btSphereShape(radius);
+  _finishCollisionShape(collisionShape, options, _computeScale(root, options));
+
+  return collisionShape;
+};
+
+exports.createHullShape = (function() {
   const vertex = new THREE.Vector3();
   const center = new THREE.Vector3();
-  return function(root, fit, margin, bounds, maxVertices) {
+  return function(root, options) {
+    options.type = TYPE.HULL;
+    _setOptions(options);
+
+    if (options.fit === FIT.MANUAL) {
+      console.warn("cannot use fit: manual with type: hull");
+      return null;
+    }
+
+    const bounds = _computeBounds(root);
+
     const btVertex = new Ammo.btVector3();
     const originalHull = new Ammo.btConvexHullShape();
-    originalHull.setMargin(margin);
+    originalHull.setMargin(options.margin);
     center.addVectors(bounds.max, bounds.min).multiplyScalar(0.5);
 
     let vertexCount = 0;
-    _iterateGeometries(root, fit, geo => {
+    _iterateGeometries(root, geo => {
       vertexCount += geo.attributes.position.array.length / 3;
     });
 
+    const maxVertices = options.hullMaxVertices || 100000;
     // todo: might want to implement this in a deterministic way that doesn't do O(verts) calls to Math.random
     if (vertexCount > maxVertices) {
       console.warn(`too many vertices for hull shape; sampling ~${maxVertices} from ~${vertexCount} vertices`);
     }
     const p = Math.min(1, maxVertices / vertexCount);
 
-    _iterateGeometries(root, fit, (geo, transform) => {
+    _iterateGeometries(root, (geo, transform) => {
       const components = geo.attributes.position.array;
       for (let i = 0; i < components.length; i += 3) {
         if (Math.random() <= p) {
@@ -395,7 +204,7 @@ const _createHullShape = (function() {
     if (originalHull.getNumVertices() >= 100) {
       //Bullet documentation says don't use convexHulls with 100 verts or more
       const shapeHull = new Ammo.btShapeHull(originalHull);
-      shapeHull.buildHull(margin);
+      shapeHull.buildHull(options.margin);
       Ammo.destroy(originalHull);
       collisionShape = new Ammo.btConvexHullShape(
         Ammo.getPointer(shapeHull.getVertexPointer()),
@@ -405,21 +214,258 @@ const _createHullShape = (function() {
     }
 
     Ammo.destroy(btVertex);
+
+    _finishCollisionShape(collisionShape, options, _computeScale(root, options));
     return collisionShape;
   };
 })();
 
-const _createTriMeshShape = (function() {
+exports.createHACDShapes = (function() {
+  const v = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  return function(root, options) {
+    options.type = TYPE.HACD;
+    _setOptions(options);
+
+    if (options.fit === FIT.MANUAL) {
+      console.warn("cannot use fit: manual with type: hacd");
+      return [];
+    }
+
+    if (!Ammo.hasOwnProperty("HACD")) {
+      console.warn(
+        "HACD unavailable in included build of Ammo.js. Visit https://github.com/mozillareality/ammo.js for the latest version."
+      );
+      return [];
+    }
+
+    const bounds = _computeBounds(root);
+    const scale = _computeScale(root, options);
+
+    let vertexCount = 0;
+    let triCount = 0;
+    center.addVectors(bounds.max, bounds.min).multiplyScalar(0.5);
+
+    _iterateGeometries(root, geo => {
+      vertexCount += geo.attributes.position.array.length / 3;
+      if (geo.index) {
+        triCount += geo.index.array.length / 3;
+      } else {
+        triCount += geo.attributes.position.array.length / 9;
+      }
+    });
+
+    const hacd = new Ammo.HACD();
+    if (options.hasOwnProperty("compacityWeight")) hacd.SetCompacityWeight(options.compacityWeight);
+    if (options.hasOwnProperty("volumeWeight")) hacd.SetVolumeWeight(options.volumeWeight);
+    if (options.hasOwnProperty("nClusters")) hacd.SetNClusters(options.nClusters);
+    if (options.hasOwnProperty("nVerticesPerCH")) hacd.SetNVerticesPerCH(options.nVerticesPerCH);
+    if (options.hasOwnProperty("concavity")) hacd.SetConcavity(options.concavity);
+
+    const points = Ammo._malloc(vertexCount * 3 * 8);
+    const triangles = Ammo._malloc(triCount * 3 * 4);
+    hacd.SetPoints(points);
+    hacd.SetTriangles(triangles);
+    hacd.SetNPoints(vertexCount);
+    hacd.SetNTriangles(triCount);
+
+    const pptr = points / 8,
+      tptr = triangles / 4;
+    _iterateGeometries(root, (geo, transform) => {
+      const components = geo.attributes.position.array;
+      const indices = geo.index ? geo.index.array : null;
+      for (let i = 0; i < components.length; i += 3) {
+        v.set(components[i + 0], components[i + 1], components[i + 2])
+          .applyMatrix4(transform)
+          .sub(center);
+        Ammo.HEAPF64[pptr + i + 0] = v.x;
+        Ammo.HEAPF64[pptr + i + 1] = v.y;
+        Ammo.HEAPF64[pptr + i + 2] = v.z;
+      }
+      if (indices) {
+        for (let i = 0; i < indices.length; i++) {
+          Ammo.HEAP32[tptr + i] = indices[i];
+        }
+      } else {
+        for (let i = 0; i < components.length / 3; i++) {
+          Ammo.HEAP32[tptr + i] = i;
+        }
+      }
+    });
+
+    hacd.Compute();
+    const nClusters = hacd.GetNClusters();
+
+    const shapes = [];
+    for (let i = 0; i < nClusters; i++) {
+      const hull = new Ammo.btConvexHullShape();
+      hull.setMargin(options.margin);
+      const nPoints = hacd.GetNPointsCH(i);
+      const nTriangles = hacd.GetNTrianglesCH(i);
+      const hullPoints = Ammo._malloc(nPoints * 3 * 8);
+      const hullTriangles = Ammo._malloc(nTriangles * 3 * 4);
+      hacd.GetCH(i, hullPoints, hullTriangles);
+
+      const pptr = hullPoints / 8;
+      for (let pi = 0; pi < nPoints; pi++) {
+        const btVertex = new Ammo.btVector3();
+        const px = Ammo.HEAPF64[pptr + pi * 3 + 0];
+        const py = Ammo.HEAPF64[pptr + pi * 3 + 1];
+        const pz = Ammo.HEAPF64[pptr + pi * 3 + 2];
+        btVertex.setValue(px, py, pz);
+        hull.addPoint(btVertex, pi === nPoints - 1);
+        Ammo.destroy(btVertex);
+      }
+
+      _finishCollisionShape(hull, options, scale);
+      shapes.push(hull);
+    }
+
+    return shapes;
+  };
+})();
+
+exports.createVHACDShapes = (function() {
+  const v = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  return function(root, options) {
+    options.type = TYPE.VHACD;
+    _setOptions(options);
+
+    if (options.fit === FIT.MANUAL) {
+      console.warn("cannot use fit: manual with type: vhacd");
+      return [];
+    }
+
+    if (!Ammo.hasOwnProperty("VHACD")) {
+      console.warn(
+        "VHACD unavailable in included build of Ammo.js. Visit https://github.com/mozillareality/ammo.js for the latest version."
+      );
+      return [];
+    }
+
+    const bounds = _computeBounds(root);
+    const scale = _computeScale(root, options);
+
+    let vertexCount = 0;
+    let triCount = 0;
+    center.addVectors(bounds.max, bounds.min).multiplyScalar(0.5);
+
+    _iterateGeometries(root, geo => {
+      vertexCount += geo.attributes.position.count;
+      if (geo.index) {
+        triCount += geo.index.count / 3;
+      } else {
+        triCount += geo.attributes.position.count / 3;
+      }
+    });
+
+    const vhacd = new Ammo.VHACD();
+    const params = new Ammo.Parameters();
+    //https://kmamou.blogspot.com/2014/12/v-hacd-20-parameters-description.html
+    if (options.hasOwnProperty("resolution")) params.set_m_resolution(options.resolution);
+    if (options.hasOwnProperty("depth")) params.set_m_depth(options.depth);
+    if (options.hasOwnProperty("concavity")) params.set_m_concavity(options.concavity);
+    if (options.hasOwnProperty("planeDownsampling")) params.set_m_planeDownsampling(options.planeDownsampling);
+    if (options.hasOwnProperty("convexhullDownsampling"))
+      params.set_m_convexhullDownsampling(options.convexhullDownsampling);
+    if (options.hasOwnProperty("alpha")) params.set_m_alpha(options.alpha);
+    if (options.hasOwnProperty("beta")) params.set_m_beta(options.beta);
+    if (options.hasOwnProperty("gamma")) params.set_m_gamma(options.gamma);
+    if (options.hasOwnProperty("pca")) params.set_m_pca(options.pca);
+    if (options.hasOwnProperty("mode")) params.set_m_mode(options.mode);
+    if (options.hasOwnProperty("maxNumVerticesPerCH")) params.set_m_maxNumVerticesPerCH(options.maxNumVerticesPerCH);
+    if (options.hasOwnProperty("minVolumePerCH")) params.set_m_minVolumePerCH(options.minVolumePerCH);
+    if (options.hasOwnProperty("convexhullApproximation"))
+      params.set_m_convexhullApproximation(options.convexhullApproximation);
+    if (options.hasOwnProperty("oclAcceleration")) params.set_m_oclAcceleration(options.oclAcceleration);
+
+    const points = Ammo._malloc(vertexCount * 3 * 8);
+    const triangles = Ammo._malloc(triCount * 3 * 4);
+
+    let pptr = points / 8,
+      tptr = triangles / 4;
+    _iterateGeometries(root, (geo, transform) => {
+      const components = geo.attributes.position.array;
+      const indices = geo.index ? geo.index.array : null;
+      for (let i = 0; i < components.length; i += 3) {
+        v.set(components[i + 0], components[i + 1], components[i + 2])
+          .applyMatrix4(transform)
+          .sub(center);
+        Ammo.HEAPF64[pptr + 0] = v.x;
+        Ammo.HEAPF64[pptr + 1] = v.y;
+        Ammo.HEAPF64[pptr + 2] = v.z;
+        pptr += 3;
+      }
+      if (indices) {
+        for (let i = 0; i < indices.length; i++) {
+          Ammo.HEAP32[tptr] = indices[i];
+          tptr++;
+        }
+      } else {
+        for (let i = 0; i < components.length / 3; i++) {
+          Ammo.HEAP32[tptr] = i;
+          tptr++;
+        }
+      }
+    });
+
+    vhacd.Compute(points, 3, vertexCount, triangles, 3, triCount, params);
+    Ammo._free(points);
+    Ammo._free(triangles);
+    const nHulls = vhacd.GetNConvexHulls();
+
+    const shapes = [];
+    const ch = new Ammo.ConvexHull();
+    for (let i = 0; i < nHulls; i++) {
+      vhacd.GetConvexHull(i, ch);
+      const nPoints = ch.get_m_nPoints();
+      const hullPoints = ch.get_m_points();
+
+      const hull = new Ammo.btConvexHullShape();
+      hull.setMargin(options.margin);
+
+      for (let pi = 0; pi < nPoints; pi++) {
+        const btVertex = new Ammo.btVector3();
+        const px = ch.get_m_points(pi * 3 + 0);
+        const py = ch.get_m_points(pi * 3 + 1);
+        const pz = ch.get_m_points(pi * 3 + 2);
+        btVertex.setValue(px, py, pz);
+        hull.addPoint(btVertex, pi === nPoints - 1);
+        Ammo.destroy(btVertex);
+      }
+
+      _finishCollisionShape(hull, options, scale);
+      shapes.push(hull);
+    }
+    Ammo.destroy(ch);
+    Ammo.destroy(vhacd);
+
+    return shapes;
+  };
+})();
+
+exports.createTriMeshShape = (function() {
   const va = new THREE.Vector3();
   const vb = new THREE.Vector3();
   const vc = new THREE.Vector3();
-  return function(root, fit, scale) {
+  return function(root, options) {
+    options.type = TYPE.MESH;
+    _setOptions(options);
+
+    if (options.fit === FIT.MANUAL) {
+      console.warn("cannot use fit: manual with type: mesh");
+      return null;
+    }
+
+    const scale = _computeScale(root, options);
+
     const bta = new Ammo.btVector3();
     const btb = new Ammo.btVector3();
     const btc = new Ammo.btVector3();
     const triMesh = new Ammo.btTriangleMesh(true, false);
 
-    _iterateGeometries(root, fit, (geo, transform) => {
+    _iterateGeometries(root, (geo, transform) => {
       const components = geo.attributes.position.array;
       if (geo.index) {
         for (let i = 0; i < geo.index.count; i += 3) {
@@ -457,6 +503,153 @@ const _createTriMeshShape = (function() {
     Ammo.destroy(bta);
     Ammo.destroy(btb);
     Ammo.destroy(btc);
+
+    _finishCollisionShape(collisionShape, options);
     return collisionShape;
+  };
+})();
+
+function _setOptions(options) {
+  options.fit = options.hasOwnProperty("fit") ? options.fit : FIT.ALL;
+  options.type = options.type || TYPE.HULL;
+  options.minHalfExtent = options.hasOwnProperty("minHalfExtent") ? options.minHalfExtent : 0;
+  options.maxHalfExtent = options.hasOwnProperty("maxHalfExtent") ? options.maxHalfExtent : Number.POSITIVE_INFINITY;
+  options.cylinderAxis = options.cylinderAxis || "y";
+  options.margin = options.hasOwnProperty("margin") ? options.margin : 0.01;
+
+  if (!options.offset) {
+    options.offset = new THREE.Vector3();
+  }
+
+  if (!options.orientation) {
+    options.orientation = new THREE.Quaternion();
+  }
+}
+
+const _finishCollisionShape = function(collisionShape, options, scale) {
+  collisionShape.type = options.type;
+  collisionShape.setMargin(options.margin);
+  collisionShape.destroy = () => {
+    for (let res of collisionShape.resources || []) {
+      Ammo.destroy(res);
+    }
+    Ammo.destroy(collisionShape);
+  };
+
+  const localTransform = new Ammo.btTransform();
+  const rotation = new Ammo.btQuaternion();
+  localTransform.setIdentity();
+
+  localTransform.getOrigin().setValue(options.offset.x, options.offset.y, options.offset.z);
+  rotation.setValue(options.orientation.x, options.orientation.y, options.orientation.z, options.orientation.w);
+
+  localTransform.setRotation(rotation);
+  Ammo.destroy(rotation);
+
+  if (scale) {
+    const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
+    collisionShape.setLocalScaling(localScale);
+    Ammo.destroy(localScale);
+  }
+
+  collisionShape.localTransform = localTransform;
+};
+
+// Calls `cb(geo, transform)` for each geometry under `root` whose vertices we should take into account for the physics shape.
+// `transform` is the transform required to transform the given geometry's vertices into root-local space.
+const _iterateGeometries = (function() {
+  const transform = new THREE.Matrix4();
+  const inverse = new THREE.Matrix4();
+  const bufferGeometry = new THREE.BufferGeometry();
+  return function(root, cb) {
+    inverse.getInverse(root.matrixWorld);
+    root.traverse(mesh => {
+      if (mesh.isMesh && (!THREE.Sky || mesh.__proto__ != THREE.Sky.prototype)) {
+        if (mesh === root) {
+          transform.identity();
+        } else {
+          if (hasUpdateMatricesFunction) mesh.updateMatrices();
+          transform.multiplyMatrices(inverse, mesh.matrixWorld);
+        }
+        // todo: might want to return null xform if this is the root so that callers can avoid multiplying
+        // things by the identity matrix
+        cb(mesh.geometry.isBufferGeometry ? mesh.geometry : bufferGeometry.fromGeometry(mesh.geometry), transform);
+      }
+    });
+  };
+})();
+
+const _computeScale = function(root, options) {
+  const scale = new THREE.Vector3(1, 1, 1);
+  if (options.fit === FIT.ALL) {
+    scale.setFromMatrixScale(root.matrixWorld);
+  }
+  return scale;
+};
+
+const _computeRadius = (function() {
+  const v = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  return function(root, bounds) {
+    let maxRadiusSq = 0;
+    let { x: cx, y: cy, z: cz } = bounds.getCenter(center);
+    _iterateGeometries(root, (geo, transform) => {
+      const components = geo.attributes.position.array;
+      for (let i = 0; i < components.length; i += 3) {
+        v.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
+        const dx = cx - v.x;
+        const dy = cy - v.y;
+        const dz = cz - v.z;
+        maxRadiusSq = Math.max(maxRadiusSq, dx * dx + dy * dy + dz * dz);
+      }
+    });
+    return Math.sqrt(maxRadiusSq);
+  };
+})();
+
+const _computeHalfExtents = function(root, bounds, minHalfExtent, maxHalfExtent) {
+  const halfExtents = new THREE.Vector3();
+  return halfExtents
+    .subVectors(bounds.max, bounds.min)
+    .multiplyScalar(0.5)
+    .clampScalar(minHalfExtent, maxHalfExtent);
+};
+
+const _computeLocalOffset = function(matrix, bounds, target) {
+  target
+    .addVectors(bounds.max, bounds.min)
+    .multiplyScalar(0.5)
+    .applyMatrix4(matrix);
+  return target;
+};
+
+// returns the bounding box for the geometries underneath `root`.
+const _computeBounds = (function() {
+  const v = new THREE.Vector3();
+  return function(root) {
+    const bounds = new THREE.Box3();
+    let minX = +Infinity;
+    let minY = +Infinity;
+    let minZ = +Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    bounds.min.set(0, 0, 0);
+    bounds.max.set(0, 0, 0);
+    _iterateGeometries(root, (geo, transform) => {
+      const components = geo.attributes.position.array;
+      for (let i = 0; i < components.length; i += 3) {
+        v.set(components[i], components[i + 1], components[i + 2]).applyMatrix4(transform);
+        if (v.x < minX) minX = v.x;
+        if (v.y < minY) minY = v.y;
+        if (v.z < minZ) minZ = v.z;
+        if (v.x > maxX) maxX = v.x;
+        if (v.y > maxY) maxY = v.y;
+        if (v.z > maxZ) maxZ = v.z;
+      }
+    });
+    bounds.min.set(minX, minY, minZ);
+    bounds.max.set(maxX, maxY, maxZ);
+    return bounds;
   };
 })();
