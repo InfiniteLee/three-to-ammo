@@ -232,6 +232,13 @@ exports.createHACDShapes = (function() {
       return [];
     }
 
+    if (!Ammo.hasOwnProperty("HACD")) {
+      console.warn(
+        "HACD unavailable in included build of Ammo.js. Visit https://github.com/mozillareality/ammo.js for the latest version."
+      );
+      return [];
+    }
+
     const bounds = _computeBounds(root);
     const scale = _computeScale(root, options);
 
@@ -327,6 +334,13 @@ exports.createVHACDShapes = (function() {
 
     if (options.fit === FIT.MANUAL) {
       console.warn("cannot use fit: manual with type: vhacd");
+      return [];
+    }
+
+    if (!Ammo.hasOwnProperty("VHACD")) {
+      console.warn(
+        "VHACD unavailable in included build of Ammo.js. Visit https://github.com/mozillareality/ammo.js for the latest version."
+      );
       return [];
     }
 
