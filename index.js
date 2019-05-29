@@ -11,7 +11,8 @@ const TYPE = (exports.TYPE = {
   HACD: "hacd", //Hierarchical Approximate Convex Decomposition
   VHACD: "vhacd", //Volumetric Hierarchical Approximate Convex Decomposition
   MESH: "mesh",
-  HEIGHTFIELD: "heightfield"
+  HEIGHTFIELD: "heightfield",
+  VOXEL: "voxel"
 });
 
 const FIT = (exports.FIT = {
@@ -48,6 +49,8 @@ exports.createCollisionShapes = function(root, options) {
       return [this.createTriMeshShape(root, options)];
     case TYPE.HEIGHTFIELD:
       return [this.createHeightfieldTerrainShape(root, options)];
+    case TYPE.VOXEL:
+      return this.createVoxelShapes(root, options);
     default:
       console.warn(options.type + " is not currently supported");
       return [];
@@ -601,6 +604,45 @@ exports.createHeightfieldTerrainShape = function(root, options) {
 
   _finishCollisionShape(collisionShape, options);
   return collisionShape;
+};
+
+exports.createVoxelShapes = function(root, options) {
+  options.type = TYPE.VOXEL;
+  _setOptions(options);
+
+  const min = new THREE.Vector3();
+  const max = new THREE.Vector3();
+  const box = new THREE.Box3(min, max);
+  const center = new THREE.Vector3();
+  const size = new THREE.Vector3();
+
+  const shapes = [];
+
+  console.log("start");
+
+  for (let i = 0; i < options.voxelData.length; i += 6) {
+    box.min.set(options.voxelData[i], options.voxelData[i + 1], options.voxelData[i + 2]);
+    box.max.set(options.voxelData[i + 3], options.voxelData[i + 4], options.voxelData[i + 5]);
+    box.getSize(size);
+    box.getCenter(center);
+    const btHalfExtents = new Ammo.btVector3(size.x / 2, size.y / 2, size.z / 2);
+    const collisionShape = new Ammo.btBoxShape(btHalfExtents);
+    Ammo.destroy(btHalfExtents);
+    const localTransform = new Ammo.btTransform();
+    localTransform.setIdentity();
+    localTransform.getOrigin().setValue(center.x, center.y, center.z);
+    collisionShape.type = options.type;
+    collisionShape.setMargin(options.margin);
+    collisionShape.destroy = () => {
+      Ammo.destroy(collisionShape);
+    };
+    collisionShape.localTransform = localTransform;
+    shapes.push(collisionShape);
+  }
+
+  console.log("end");
+
+  return shapes;
 };
 
 function _setOptions(options) {
