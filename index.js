@@ -12,7 +12,8 @@ const TYPE = (exports.TYPE = {
   VHACD: "vhacd", //Volumetric Hierarchical Approximate Convex Decomposition
   MESH: "mesh",
   HEIGHTFIELD: "heightfield",
-  VOXEL: "voxel"
+  VOXEL: "voxel",
+  BVH_VOXEL: "bvh_voxel"
 });
 
 const FIT = (exports.FIT = {
@@ -51,6 +52,8 @@ exports.createCollisionShapes = function(root, options) {
       return [this.createHeightfieldTerrainShape(root, options)];
     case TYPE.VOXEL:
       return this.createVoxelShapes(root, options);
+    case TYPE.BVH_VOXEL:
+      return this.createBVHVoxelShapes(root, options);
     default:
       console.warn(options.type + " is not currently supported");
       return [];
@@ -639,6 +642,110 @@ exports.createVoxelShapes = function(root, options) {
     collisionShape.localTransform = localTransform;
     shapes.push(collisionShape);
   }
+
+  console.log("end");
+
+  return shapes;
+};
+
+function getLeaves(subtree, leaves) {
+  if (subtree.count) {
+    leaves.push(subtree);
+  } else {
+    if (subtree.left) {
+      getLeaves(subtree.left, leaves);
+    }
+    if (subtree.right) {
+      getLeaves(subtree.right, leaves);
+    }
+  }
+}
+
+exports.createBVHVoxelShapes = function(root, options) {
+  options.type = TYPE.VOXEL;
+  _setOptions(options);
+
+  const min = new THREE.Vector3();
+  const max = new THREE.Vector3();
+  const box = new THREE.Box3(min, max);
+  const center = new THREE.Vector3();
+  const size = new THREE.Vector3();
+
+  const shapes = [];
+
+  console.log("start");
+
+  // root.traverse(o => {
+  //   if (
+  //     o.isMesh &&
+  //     (!THREE.Sky || o.__proto__ != THREE.Sky.prototype) &&
+  //     o.geometry.boundsTree &&
+  //     o.el.object3D.visible
+  //   ) {
+  //     if (o.geometry.boundsTree) {
+  //       const leaves = [];
+  //       const bvh = o.geometry.boundsTree;
+  //       const roots = bvh._roots;
+  //       for (let i = 0; i < roots.length; ++i) {
+  //         getLeaves(roots[i], leaves);
+  //       }
+
+  //       for (let j = 0; j < leaves.length; j++) {
+  //         const boundingData = leaves[j].boundingData;
+  //         box.min.set(boundingData[0], boundingData[1], boundingData[2]);
+  //         box.max.set(boundingData[3], boundingData[4], boundingData[5]);
+  //         box.getSize(size);
+  //         box.getCenter(center);
+  //         const btHalfExtents = new Ammo.btVector3(size.x / 2, size.y / 2, size.z / 2);
+  //         const collisionShape = new Ammo.btBoxShape(btHalfExtents);
+  //         Ammo.destroy(btHalfExtents);
+  //         const localTransform = new Ammo.btTransform();
+  //         localTransform.setIdentity();
+  //         localTransform.getOrigin().setValue(center.x, center.y, center.z);
+  //         collisionShape.type = options.type;
+  //         collisionShape.setMargin(options.margin);
+  //         collisionShape.destroy = () => {
+  //           Ammo.destroy(collisionShape);
+  //         };
+  //         collisionShape.localTransform = localTransform;
+  //         shapes.push(collisionShape);
+  //       }
+  //     }
+  //   }
+  // });
+
+  _iterateGeometries(root, options, (geo, transform) => {
+    if (geo.boundsTree) {
+      const leaves = [];
+      const bvh = geo.boundsTree;
+      const roots = bvh._roots;
+      for (let i = 0; i < roots.length; ++i) {
+        getLeaves(roots[i], leaves);
+      }
+
+      for (let j = 0; j < leaves.length; j++) {
+        const boundingData = leaves[j].boundingData;
+        box.min.set(boundingData[0], boundingData[1], boundingData[2]);
+        box.max.set(boundingData[3], boundingData[4], boundingData[5]);
+        box.applyMatrix4(transform);
+        box.getSize(size);
+        box.getCenter(center);
+        const btHalfExtents = new Ammo.btVector3(size.x / 2, size.y / 2, size.z / 2);
+        const collisionShape = new Ammo.btBoxShape(btHalfExtents);
+        Ammo.destroy(btHalfExtents);
+        const localTransform = new Ammo.btTransform();
+        localTransform.setIdentity();
+        localTransform.getOrigin().setValue(center.x, center.y, center.z);
+        collisionShape.type = options.type;
+        collisionShape.setMargin(options.margin);
+        collisionShape.destroy = () => {
+          Ammo.destroy(collisionShape);
+        };
+        collisionShape.localTransform = localTransform;
+        shapes.push(collisionShape);
+      }
+    }
+  });
 
   console.log("end");
 
