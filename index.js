@@ -170,6 +170,8 @@ exports.createConeShape = function(root, options) {
 
 exports.createSphereShape = function(root, options) {
   options.type = TYPE.SPHERE;
+  _setOptions(options);
+
   let radius;
   if (options.fit === FIT.MANUAL && !isNaN(options.sphereRadius)) {
     radius = options.sphereRadius;
@@ -665,7 +667,7 @@ const _iterateGeometries = (function() {
       if (
         mesh.isMesh &&
         (!THREE.Sky || mesh.__proto__ != THREE.Sky.prototype) &&
-        (options.includeInvisible || mesh.el.object3D.visible)
+        (options.includeInvisible || ((mesh.el && mesh.el.object3D.visible) || mesh.visible))
       ) {
         if (mesh === root) {
           transform.identity();
