@@ -1,6 +1,6 @@
 "use strict";
 /* global Ammo */
-// import * as THREE from "three";
+import * as THREE from "three";
 
 export const TYPE = {
   BOX: "box",
@@ -24,8 +24,6 @@ export const HEIGHTFIELD_DATA_TYPE = {
   short: "short",
   float: "float"
 };
-
-const hasUpdateMatricesFunction = THREE.Object3D.prototype.hasOwnProperty("updateMatrices");
 
 export const createCollisionShapes = function(vertices, matrices, indexes, matrixWorld, options = {}) {
   switch (options.type) {
@@ -670,20 +668,22 @@ const _finishCollisionShape = function(collisionShape, options, scale) {
 };
 
 export const iterateGeometries = (function() {
-  const transform = new THREE.Matrix4();
   const inverse = new THREE.Matrix4();
   return function(root, options, cb) {
     inverse.getInverse(root.matrixWorld);
+    const scale = new THREE.Vector3();
+    scale.setFromMatrixScale(root.matrixWorld);
     root.traverse(mesh => {
+      const transform = new THREE.Matrix4();
       if (
         mesh.isMesh &&
-        (!THREE.Sky || mesh.__proto__ != THREE.Sky.prototype) &&
+        mesh.name !== "Sky" &&
         (options.includeInvisible || (mesh.el && mesh.el.object3D.visible) || mesh.visible)
       ) {
         if (mesh === root) {
           transform.identity();
         } else {
-          if (hasUpdateMatricesFunction) mesh.updateMatrices();
+          mesh.updateWorldMatrix(true);
           transform.multiplyMatrices(inverse, mesh.matrixWorld);
         }
         // todo: might want to return null xform if this is the root so that callers can avoid multiplying
