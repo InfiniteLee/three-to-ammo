@@ -691,7 +691,7 @@ export const iterateGeometries = (function() {
         cb(
           mesh.geometry.isBufferGeometry ? mesh.geometry.attributes.position.array : mesh.geometry.vertices,
           transform.elements,
-          mesh.geometry.index.array
+          mesh.geometry.index ? mesh.geometry.index.array : null
         );
       }
     });
