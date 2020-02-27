@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Mocha Tests</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="https://unpkg.com/mocha/mocha.css" />
+  </head>
+  <body>
+    <div id="mocha"></div>
+
+    <script src="https://unpkg.com/chai/chai.js"></script>
+    <script src="https://unpkg.com/mocha/mocha.js"></script>
+
+    <script>
+        window.onload = function() {
+        mocha.setup({delay: true, ui: 'bdd'});
+        // mocha.checkLeaks();
+  
+        (function(d, s, id){
+            var js, fjs = d.getElementsByTagName(s)[0];
+            if (d.getElementById(id)){ return; }
+            js = d.createElement(s); js.id = id;
+            js.src = "test.js";
+            fjs.parentNode.insertBefore(js, fjs);
+        }(document, 'script', 'test'));
+          mocha.run();
+        };
+      </script>
+  </body>
+</html>
