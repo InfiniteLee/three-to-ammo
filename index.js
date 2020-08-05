@@ -534,9 +534,9 @@ export const createTriMeshShape = (function() {
       }
     }
 
-    const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
-    triMesh.setScaling(localScale);
-    Ammo.destroy(localScale);
+    //const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
+    //triMesh.setScaling(localScale);
+    //Ammo.destroy(localScale);
 
     const collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
     collisionShape.resources = [triMesh];
