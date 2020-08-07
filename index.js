@@ -182,7 +182,6 @@ export const createSphereShape = function(vertices, matrices, matrixWorld, optio
 
 export const createHullShape = (function() {
   const vertex = new THREE.Vector3();
-  const center = new THREE.Vector3();
   const matrix = new THREE.Matrix4();
   return function(vertices, matrices, matrixWorld, options = {}) {
     options.type = TYPE.HULL;
@@ -198,7 +197,6 @@ export const createHullShape = (function() {
     const btVertex = new Ammo.btVector3();
     const originalHull = new Ammo.btConvexHullShape();
     originalHull.setMargin(options.margin);
-    center.addVectors(bounds.max, bounds.min).multiplyScalar(0.5);
 
     let vertexCount = 0;
     for (let i = 0; i < vertices.length; i++) {
@@ -221,8 +219,7 @@ export const createHullShape = (function() {
           // always include the last vertex
           vertex
             .set(components[j], components[j + 1], components[j + 2])
-            .applyMatrix4(matrix)
-            .sub(center);
+            .applyMatrix4(matrix);
           btVertex.setValue(vertex.x, vertex.y, vertex.z);
           originalHull.addPoint(btVertex, isLastVertex); // recalc AABB only on last geometry
         }
@@ -537,9 +534,9 @@ export const createTriMeshShape = (function() {
       }
     }
 
-    const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
-    triMesh.setScaling(localScale);
-    Ammo.destroy(localScale);
+    //const localScale = new Ammo.btVector3(scale.x, scale.y, scale.z);
+    //triMesh.setScaling(localScale);
+    //Ammo.destroy(localScale);
 
     const collisionShape = new Ammo.btBvhTriangleMeshShape(triMesh, true, true);
     collisionShape.resources = [triMesh];
