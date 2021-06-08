@@ -670,7 +670,7 @@ const _finishCollisionShape = function(collisionShape, options, scale) {
 export const iterateGeometries = (function() {
   const inverse = new THREE.Matrix4();
   return function(root, options, cb) {
-    inverse.getInverse(root.matrixWorld);
+    inverse.copy(root.matrixWorld).invert();
     const scale = new THREE.Vector3();
     scale.setFromMatrixScale(root.matrixWorld);
     root.traverse(mesh => {
